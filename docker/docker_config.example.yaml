@@ -1,0 +1,289 @@
+# =============================================================================
+# 安糖心语后端运行配置 —— 模板文件
+# =============================================================================
+#
+# 用法：
+#   1) 把本文件复制为 docker_config.yaml
+#         cp docker/docker_config.example.yaml docker/docker_config.yaml
+#   2) 按下方「[必填]」标记修改对应字段
+#   3) ctrl-s保存，然后终端输入docker compose -f docker/docker-compose.yml up --build -d
+#
+# 真实的 docker_config.yaml 已经在 .gitignore 里，不会被 push 到仓库。
+#
+# -----------------------------------------------------------------------------
+# 你需要改什么？
+# -----------------------------------------------------------------------------
+#   必须改：multi_models 下的 5 个 api_key（详见下方各字段注释，不同字段
+#          可以混用不同厂商）
+#   建议改：tavily 的 api_key（联网搜索工具用）
+#   可选改：高德 / Google / 快递 / BoCha 的 key（对应工具用不到就保留占位）
+#   不用改：mysql / redis / minio / rag / bootstrap / whitelist 等其他全部字段
+# =============================================================================
+
+
+# ============== [无需修改] 服务自身配置 ==============
+server:
+  env: "dev"
+  host: "127.0.0.1"
+  port: 7860
+  name: "AgentChat"
+  version: "1.0.0"
+
+
+# ============== [无需修改] 容器内服务连接 ==============
+# 这些主机名（mysql / redis）是 docker-compose 里的服务名，
+# 容器之间走内部网络，本地不要改成 localhost。
+mysql:
+  endpoint: "mysql+pymysql://root:123456@mysql:3306/agentchat"
+  async_endpoint: "mysql+aiomysql://root:123456@mysql:3306/agentchat"
+
+redis:
+  endpoint: "redis://redis:6379"
+
+
+# =============================================================================
+# [必填] 大模型 API 配置
+# =============================================================================
+#
+# 下面 5 个字段中，前 3 个（conversation_model / qwen_vl / embedding）
+# 走 OpenAI 兼容接口，可以换成任何兼容厂商；
+# 后 2 个（text2image / rerank）代码里直接对接 dashscope，**只能填 阿里云百炼dashscope的api key**。
+#
+# -----------------------------------------------------------------------------
+# 常见 provider 速查（填 base_url 和 model_name 时参考）
+# -----------------------------------------------------------------------------
+#
+#   阿里云百炼 dashscope（默认；申请：https://bailian.console.aliyun.com/）
+#     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+#     对话模型: qwen3.6-plus / qwen-plus / qwen-turbo
+#     视觉模型: qwen3-vl-plus / qwen-vl-max
+#     embedding: text-embedding-v4
+#
+#   DeepSeek（申请：https://platform.deepseek.com/）
+#     base_url: https://api.deepseek.com/v1
+#     对话模型: deepseek-chat / deepseek-reasoner
+#     视觉模型: 暂不支持 → 视觉这一项不能用 DeepSeek
+#     embedding: 暂不支持 → embedding 这一项不能用 DeepSeek
+#
+#   OpenAI（申请：https://platform.openai.com/，需海外账号 + 付费）
+#     base_url: https://api.openai.com/v1
+#     对话模型: gpt-4o-mini / gpt-4o
+#     视觉模型: gpt-4o（同一个模型既能对话又能看图）
+#     embedding: text-embedding-3-small
+#
+#   智谱 GLM（申请：https://bigmodel.cn/）
+#     base_url: https://open.bigmodel.cn/api/paas/v4
+#     对话模型: glm-4-flash（免费）/ glm-4-plus
+#     视觉模型: glm-4v-flash
+#     embedding: embedding-3
+#
+#   月之暗面 Kimi（申请：https://platform.moonshot.cn/）
+#     base_url: https://api.moonshot.cn/v1
+#     对话模型: moonshot-v1-8k / moonshot-v1-32k
+#     视觉模型: moonshot-v1-8k-vision-preview
+#     embedding: 暂不支持
+#
+#   火山引擎豆包（申请：https://www.volcengine.com/product/doubao）
+#     base_url: https://ark.cn-beijing.volces.com/api/v3
+#     model_name 用方舟控制台分配的「endpoint id」字符串
+#
+# -----------------------------------------------------------------------------
+# 混搭策略示例
+# -----------------------------------------------------------------------------
+#
+#   想用 DeepSeek 当对话主力（性价比高，但没有视觉/embedding）：
+#     conversation_model → DeepSeek deepseek-chat
+#     qwen_vl            → 仍然填 dashscope（DeepSeek 不支持视觉）
+#     embedding          → 仍然填 dashscope（DeepSeek 不支持 embedding）
+#     text2image         → dashscope（硬编码，没的选）
+#     rerank             → dashscope（硬编码，没的选）
+#
+#   完全不用图片理解、不用文生图、不在意 rerank：
+#     conversation_model → 任意 OpenAI 兼容模型
+#     embedding          → 任意 OpenAI 兼容 embedding
+#     qwen_vl / text2image / rerank → 留空 placeholder，对应功能用不了即可
+#
+# =============================================================================
+
+multi_models:
+
+  # --------- [必填] 主对话模型 ---------
+  # 接口类型：OpenAI 兼容（任何厂商都行）
+  # 用途：所有用户输入的回复都走这个模型，没填会一启动就报错
+  conversation_model:
+    api_key: "REPLACE_WITH_YOUR_API_KEY"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model_name: "qwen3.6-plus"
+
+  # --------- [必填，但只能 dashscope] 文生图模型 ---------
+  # 接口类型：dashscope 专属 SDK（代码 import dashscope）
+  # 用途：用户在对话中要求"画张图"时调用
+  # 注意：不能换 DeepSeek / OpenAI 等其他 provider；
+  #       即使用不到这个功能，api_key 也得填一个 dashscope key 让校验通过。
+  #       懒得申请的话，可以和 conversation_model 共用 dashscope key。
+  text2image:
+    api_key: "REPLACE_WITH_YOUR_DASHSCOPE_KEY"
+    base_url: "https://dashscope.aliyuncs.com/api/v1"
+    model_name: "qwen-image-2.0"
+
+  # --------- [必填] 视觉模型（图片理解）---------
+  # 接口类型：OpenAI 兼容
+  # 用途：用户上传图片（比如血糖仪截图）时分析图片内容
+  # 注意：DeepSeek、Moonshot 等不支持视觉的厂商，这里要换成支持的（如 dashscope qwen-vl、OpenAI gpt-4o、智谱 glm-4v）
+  qwen_vl:
+    api_key: "REPLACE_WITH_YOUR_API_KEY"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model_name: "qwen3-vl-plus"
+
+  # --------- [必填] Embedding 模型 ---------
+  # 接口类型：OpenAI 兼容
+  # 用途：把知识库 PDF 切片向量化，决定检索质量
+  # 注意：DeepSeek、Moonshot 等没有 embedding，这里要换成有 embedding 的厂商
+  #       （dashscope text-embedding-v4 / OpenAI text-embedding-3-small / 智谱 embedding-3）
+  embedding:
+    api_key: "REPLACE_WITH_YOUR_API_KEY"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model_name: "text-embedding-v4"
+
+  # --------- [必填，但只能 dashscope] 重排序模型 ---------
+  # 接口类型：dashscope 专属 HTTP 协议（请求体格式硬编码）
+  # 用途：embedding 召回后的二次精排，让靠前的结果更准
+  # 注意：和 text2image 一样只能填 dashscope；
+  #       和 conversation_model 共用同一个 dashscope key 即可。
+  rerank:
+    api_key: "REPLACE_WITH_YOUR_DASHSCOPE_KEY"
+    base_url: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    model_name: "gte-rerank-v2"
+
+  # --------- [推荐] 安糖轻量分析器模型 ---------
+  # 接口类型：OpenAI 兼容
+  # 用途：每轮对话前先跑一个小快模型，生成上下文备忘录注入主对话 prompt，
+  #       帮助主 agent 区分"本人经历 / 引用他人 / 小说虚构"等语境，
+  #       减少误判（比如把"朋友说救命"当成用户高危）。
+  # 选型建议（实测）：qwen-turbo ~1.6s / qwen-flash ~1.9s / qwen-plus ~3.7s。
+  #       优先选真正的 turbo / flash，别被名字带"flash"的内部别名误导。
+  # model_name 留空 = 回退到 conversation_model（兜底但不推荐，主模型通常太慢）。
+  # 行为开关（超时、是否启用等）在文件底部 antang_light_analyzer 节。
+  light_analyzer:
+    api_key: "REPLACE_WITH_YOUR_API_KEY"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model_name: "qwen-turbo"
+
+
+# ============== [可选] 外部工具 API ==============
+# 没填的工具调用时会失败，但不影响主对话流程。
+# 想体验完整功能就申请下面这些 key。
+tools:
+  # 高德天气 —— 安糖在做"今天能不能出门跑步"类问题时会用
+  #   申请： https://lbs.amap.com/  注册 → 控制台 → 新建 Web 服务 Key
+  weather:
+    api_key: "REPLACE_WITH_YOUR_AMAP_KEY"
+    endpoint: "https://restapi.amap.com/v3/weather/weatherInfo?parameters"
+
+  # Tavily 联网搜索 —— 知识库答不上的问题会走联网搜
+  #   申请： https://tavily.com/  注册即送免费额度
+  tavily:
+    api_key: "REPLACE_WITH_YOUR_TAVILY_KEY"
+
+  # SerpApi 的 Google Search（可选，与 Tavily 二选一即可）
+  #   申请： https://serpapi.com/
+  google:
+    api_key: "REPLACE_WITH_YOUR_SERPAPI_KEY"
+
+  # 阿里云市场快递查询（基本用不到，保留占位即可）
+  delivery:
+    api_key: "REPLACE_WITH_YOUR_DELIVERY_KEY"
+    endpoint: "https://qyexpress.market.alicloudapi.com/composite/queryexpress"
+
+  # BoCha 联网搜索（备用，可不填）
+  bocha:
+    api_key: "REPLACE_WITH_YOUR_BOCHA_KEY"
+    endpoint: "https://api.bochaai.com/v1/web-search"
+
+
+# ============== [无需修改] RAG 检索配置 ==============
+rag:
+  enable_summary: False         # 安糖走 content 检索，关掉摘要省 LLM 调用
+  enable_elasticsearch: False   # 默认不用 ES
+  enable_ik_analyzer: False
+
+  retrival:
+    top_k: 5
+    min_score: 0.01
+
+  split:
+    chunk_size: 500
+    overlap_size: 100
+
+  elasticsearch:
+    hosts: "http://127.0.0.1:9200"
+
+  vector_db:
+    host: "127.0.0.1"
+    port: "19530"
+    mode: "chroma"              # 默认 chroma；想换 milvus 再说
+
+
+# ============== [无需修改] 对象存储 ==============
+# 默认走容器内 MinIO，启动后自动建 bucket、设权限，不需要任何额外操作。
+storage:
+  mode: "minio"
+
+  # 阿里云 OSS：只有在 mode 改成 "oss" 时才会用到，否则忽略
+  oss:
+    access_key_id: "REPLACE_WITH_YOUR_OSS_KEY_ID"
+    access_key_secret: "REPLACE_WITH_YOUR_OSS_KEY_SECRET"
+    endpoint: "oss-cn-beijing.aliyuncs.com"
+    bucket_name: "agentchat"
+    base_url: "https://agentchat.oss-cn-beijing.aliyuncs.com"
+
+  # MinIO：默认账号 minioadmin / minioadmin，本地够用，不要改
+  minio:
+    access_key_id: "minioadmin"
+    access_key_secret: "minioadmin"
+    endpoint: "minio:9000"
+    bucket_name: "agentchat"
+    base_url: "http://127.0.0.1:9000/agentchat"
+
+
+# ============== [无需修改] 默认资源 ==============
+default_config:
+  mcp_logo_url: "https://agentchat.oss-cn-beijing.aliyuncs.com/icons/mcp/mcp.png"
+  tool_logo_url: "https://agentchat.oss-cn-beijing.aliyuncs.com/icons/tools/default.png"
+  agent_logo_url: "https://agentchat.oss-cn-beijing.aliyuncs.com/icons/tools/bot.png"
+  memory_collection_name: "memory"
+
+
+# ============== [无需修改] 启动初始化开关 ==============
+bootstrap:
+  init_default_tools: true
+  init_system_mcp: true
+  refresh_system_mcp_on_startup: false
+
+
+# ============== [可选] Langfuse 追踪 ==============
+# 想做对话过程的 trace / 调试可以开；不用就保留占位（不影响任何功能）。
+#   官网： https://cloud.langfuse.com
+langfuse:
+  trace_name: "agentchat"
+  host: "https://cloud.langfuse.com"
+  public_key: "REPLACE_OR_LEAVE_BLANK"
+  secret_key: "REPLACE_OR_LEAVE_BLANK"
+  user_id: "your-name"
+
+
+# ============== [无需修改] 接口白名单 ==============
+whitelist_paths: ["/api/v1/mcp/*"]
+
+
+# ============== [可选] 安糖轻量分析器行为开关 ==============
+# 模型本身在 multi_models.light_analyzer 配置；这里只控制行为参数。
+#   enabled=false 时完全跳过分析器，主链路行为等同旧版。
+#   timeout_ms 推荐 3000~5000，给小模型足够时间出 JSON。
+#   show_internal_trace=true 会在 history events 里多写一份 hidden trace，仅 debug 用。
+antang_light_analyzer:
+  enabled: true
+  timeout_ms: 3000
+  max_output_tokens: 220
+  max_short_history_messages: 6
+  show_internal_trace: false

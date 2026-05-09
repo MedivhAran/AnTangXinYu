@@ -1,0 +1,50 @@
+# 控制 docker build 上下文，缩小镜像体积、避免泄漏
+
+# Git / IDE
+.git/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+
+# 文档（不参与构建）
+docs/
+*.md
+!src/backend/README.md
+!src/frontend/README.md
+
+# Python 缓存与本地虚拟环境
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 前端依赖与产物（容器内会重新装）
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/.npm/
+src/frontend/.pnpm/
+src/frontend/.yarn/
+src/frontend/package-lock.json
+src/frontend/pnpm-lock.yaml
+src/frontend/yarn.lock
+src/frontend/.env*
+
+# 运行时数据
+data/vector_db/
+docker/data/
+chroma_db/
+memory_db/
+vector_db/
+
+# 日志与临时
+*.log
+logs/
+.DS_Store
+Thumbs.db
+
+# 容器内会复制 docker/docker_config.yaml 进镜像，故不在这里 ignore
