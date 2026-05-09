@@ -64,7 +64,7 @@ rm -rf data/vector_db docker/data/minio_data
 
 ---
 
-## 第二种部署方式：宿主机部署（强烈 *不* 推荐，嫌自己时间太多的同学可以试试）
+## 第二种部署方式：宿主机部署（强烈 *不* 推荐，时间太多的同学可以试试）
 
 需要本机自己起好 MySQL / Redis / MinIO，并装 Python 3.12+。
 

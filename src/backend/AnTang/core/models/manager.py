@@ -19,17 +19,28 @@ class ModelManager:
     _cached: Dict[Tuple[Any, ...], Any] = {}
 
     @classmethod
-    def _get_or_create_chat_openai(cls, kind: str, model_name: str, api_key: str, base_url: str) -> ChatOpenAI:
+    def _get_or_create_chat_openai(
+        cls,
+        kind: str,
+        model_name: str,
+        api_key: str,
+        base_url: str,
+        extra_body: dict | None = None,
+    ) -> ChatOpenAI:
+        # extra_body 来自 yaml，启动时一次性加载、运行不变，所以不纳入 cache key。
         key = ("chat", kind, model_name, api_key, base_url)
         cached = cls._cached.get(key)
         if cached is not None:
             return cached
-        instance = ChatOpenAI(
+        kwargs: dict = dict(
             stream_usage=True,
             model=model_name,
             api_key=api_key,
             base_url=base_url,
         )
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        instance = ChatOpenAI(**kwargs)
         cls._cached[key] = instance
         return instance
 
@@ -41,6 +52,7 @@ class ModelManager:
             conversation_model.model_name,
             conversation_model.api_key,
             conversation_model.base_url,
+            extra_body=conversation_model.extra_body,
         )
 
     @classmethod

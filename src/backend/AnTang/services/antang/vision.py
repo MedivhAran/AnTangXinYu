@@ -20,9 +20,8 @@ from AnTang.services.antang.state import AnTangVisionAnalysis
 from AnTang.services.storage import storage_client
 from AnTang.utils.file_utils import get_object_name_from_aliyun_url, get_save_tempfile
 
-
 VISION_DESCRIPTION_PROMPT = """
-请分析这张图片，并尽量围绕安糖心语的使用场景组织描述。
+请分析这张图片。
 
 要求：
 - 先判断这更像是餐食照片、血糖相关界面/截图，还是其他日常图片。

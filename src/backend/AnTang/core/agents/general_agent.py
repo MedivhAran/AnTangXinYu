@@ -372,6 +372,12 @@ class GeneralAgent:
                     accumulated = ""
                     yield self.wrap_event(metadata)
                 elif isinstance(metadata[0], AIMessageChunk) and metadata[0].content:
+                    # LangGraph 的 messages 流会把节点内任何 LLM 调用的 token 都吐出来，
+                    # 包括工具内部嵌套调用 LLM 产生的 token。这里只放行主 agent 模型节点
+                    # （create_agent 固定命名为 "model"），避免图片理解、饮食建议等工具的
+                    # 内部 LLM 输出污染主对话流。
+                    if metadata[1].get("langgraph_node") != "model":
+                        continue
                     chunk = metadata[0].content
                     accumulated += chunk
                     # 每个 chunk 立即 yield，前端就能看到逐字效果。
@@ -384,7 +390,7 @@ class GeneralAgent:
                         },
                     }
 
-        # 针对模型回复做兜底，常见错误包括敏感词拦截、模型服务异常等。
+        # 针对模型回复做兜底。
         except Exception as err:
             logger.error(f"LLM Model Error: {err}")
             yield {

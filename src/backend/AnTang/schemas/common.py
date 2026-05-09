@@ -6,6 +6,8 @@ class ModelConfig(BaseModel):
     model_name: str = ""
     api_key: str = ""
     base_url: str = ""
+    # 透传给 OpenAI 兼容 API 的 extra_body，用于关闭 DeepSeek 思考模式等厂商特殊参数。
+    extra_body: Optional[dict] = None
 
 class MultiModels(BaseModel):
     class Config:
