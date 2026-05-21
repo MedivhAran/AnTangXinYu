@@ -68,11 +68,22 @@ class ModelManager:
     @classmethod
     def get_user_model(cls, **kwargs) -> BaseChatModel:
         # 用户绑定的自定义模型也可能被多次请求复用，按配置三元组做缓存。
+        # db 的 llm 表不含 extra_body 字段。当 db 模型的 (model_name, base_url) 恰好
+        # 与 yaml conversation_model 相同（典型情况：项目仅有一个对话模型，db 与 yaml
+        # 各存一份），自动继承 yaml 中的 extra_body，避免 deepseek 思考模式等厂商参数
+        # 在这条路径上丢失。
+        model_name = kwargs.get("model")
+        base_url = kwargs.get("base_url")
+        cm = app_settings.multi_models.conversation_model
+        extra_body = None
+        if cm.extra_body and model_name == cm.model_name and base_url == cm.base_url:
+            extra_body = cm.extra_body
         return cls._get_or_create_chat_openai(
             "user",
-            kwargs.get("model"),
+            model_name,
             kwargs.get("api_key"),
-            kwargs.get("base_url"),
+            base_url,
+            extra_body=extra_body,
         )
 
     @classmethod

@@ -8,10 +8,7 @@ from AnTang.database.session import session_getter
 class AgentDao:
 
     @classmethod
-    async def create_agent(
-        cls,
-        agent: AgentTable
-    ):
+    async def create_agent(cls, agent: AgentTable):
         with session_getter() as session:
             session.add(agent)
             session.commit()
@@ -63,65 +60,39 @@ class AgentDao:
     @classmethod
     async def check_repeat_name(cls, name: str, user_id: str):
         with session_getter() as session:
-            statement = select(AgentTable).where(
-                and_(
-                    AgentTable.name == name,
-                    AgentTable.user_id == user_id
-                )
-            )
+            statement = select(AgentTable).where(and_(AgentTable.name == name, AgentTable.user_id == user_id))
             result = session.exec(statement).all()
             return result
 
     @classmethod
-    async def search_agent_name(
-        cls, 
-        name: str, 
-        user_id: str
-    ):
+    async def search_agent_name(cls, name: str, user_id: str):
         with session_getter() as session:
             statement = select(AgentTable).where(
                 and_(
-                    AgentTable.name.like(f'%{name}%'),
-                    or_(
-                        AgentTable.user_id == user_id,
-                        AgentTable.user_id == SystemUser
-                    )
+                    AgentTable.name.like(f"%{name}%"),
+                    or_(AgentTable.user_id == user_id, AgentTable.user_id == SystemUser),
                 )
             )
             result = session.exec(statement).all()
             return result
 
     @classmethod
-    async def get_agent_by_user_id(
-        cls, 
-        user_id: str
-    ):
+    async def get_agent_by_user_id(cls, user_id: str):
         with session_getter() as session:
             statement = select(AgentTable).where(AgentTable.user_id == user_id)
             result = session.exec(statement).all()
             return result
 
     @classmethod
-    async def select_agent_by_id(
-        cls, 
-        agent_id
-    ):
+    async def select_agent_by_id(cls, agent_id):
         with session_getter() as session:
             statement = select(AgentTable).where(AgentTable.id == agent_id)
             result = session.exec(statement).first()
             return result
 
     @classmethod
-    async def update_agent_by_id(
-        cls,
-        agent_id: str,
-        update_values: dict
-    ):
+    async def update_agent_by_id(cls, agent_id: str, update_values: dict):
         with session_getter() as session:
-            statement = (
-                update(AgentTable)
-                .where(AgentTable.id == agent_id)
-                .values(**update_values)
-            )
+            statement = update(AgentTable).where(AgentTable.id == agent_id).values(**update_values)
             session.exec(statement)
             session.commit()

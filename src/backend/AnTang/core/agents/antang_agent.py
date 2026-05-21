@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import json
 from datetime import datetime
 from typing import AsyncGenerator, Sequence
 
@@ -17,8 +18,14 @@ from langchain_core.tools import BaseTool, tool
 from loguru import logger
 
 from AnTang.core.agents.general_agent import AgentConfig, GeneralAgent
+from AnTang.database.dao.cgm_report import CGMReportDao
 from AnTang.schemas.antang_analyzer import DialogState, LightAnalyzerResult
 from AnTang.services.antang.capabilities import AnTangCapabilityService
+from AnTang.services.antang.cgm_report import (
+    CGMReportService,
+    cgm_report_to_dict,
+    format_cgm_summary_for_agent,
+)
 from AnTang.services.antang.light_analyzer import light_analyzer
 from AnTang.services.antang.policies import classify_glucose_zone
 from AnTang.services.antang.profile import AnTangProfileService
@@ -67,6 +74,8 @@ class AnTangAgent(GeneralAgent):
         self.current_file_url: str | None = None
         self.current_file_name: str | None = None
         self.current_vision_analysis: AnTangVisionAnalysis | None = None
+        # light_analyzer 对本轮上下文的理解，finalize_turn 把它作为 update_profile 的判断依据。
+        self.last_analyzer_understanding: str = ""
 
     async def setup_tools(self) -> list[BaseTool]:
         """在通用工具基础上追加安糖专用工具。"""
@@ -133,7 +142,7 @@ class AnTangAgent(GeneralAgent):
             knowledge_support, _ = await AnTangCapabilityService.retrieve_knowledge(
                 query=query,
                 user_id=self.agent_config.user_id,
-                explicit_ids=self.agent_config.knowledge_ids,
+                explicit_ids=None,
             )
             return knowledge_support or "没有命中直接相关的糖尿病知识资料。"
 
@@ -232,6 +241,53 @@ class AnTangAgent(GeneralAgent):
             """
             return await AnTangCapabilityService.text_to_image(prompt) or "图片生成没有返回可用结果。"
 
+        @tool(parse_docstring=True)
+        async def import_cgm_report() -> str:
+            """
+            将本轮用户上传的 CGM(动态葡萄糖监测)评估报告 PDF 解析入库,并自动更新用户长期画像。
+
+            **何时使用**:用户本轮上传了 PDF 附件,且文件名或对话内容暗示是血糖/葡萄糖/CGM/动态/
+            评估报告。本工具会从对象存储下载 PDF,抽取 TIR / TAR / TBR / MG / SD / CV 等核心数值,
+            写入 cgm_report 表并基于这份新报告刷新用户画像的"近期风险"。
+
+            **何时不使用**:用户没传文件、或文件不是 PDF、或 PDF 明显不是 CGM 报告
+            (例如普通说明书、化验单)。
+
+            Returns:
+                str: 一段简明中文摘要,说明导入成功与否、监测时段、核心 TIR/TAR/TBR 数值。
+                  失败时返回失败原因,主对话可据此告知用户。
+            """
+            if not self.current_file_url:
+                return "本轮对话没有上传文件,无法导入 CGM 报告。"
+            if not self.current_file_name or not self.current_file_name.lower().endswith(".pdf"):
+                return "本轮上传的文件不是 PDF,无法当作 CGM 报告解析。"
+            report = await CGMReportService.parse_and_store(
+                file_url=self.current_file_url,
+                file_name=self.current_file_name,
+                user_id=self.agent_config.user_id,
+            )
+            if report.parse_status != "success":
+                return f"CGM 报告导入失败:{report.parse_error or '未知错误'}"
+            return format_cgm_summary_for_agent(report)
+
+        @tool(parse_docstring=True)
+        async def get_latest_cgm_report() -> str:
+            """
+            获取当前用户最近一份成功解析的 CGM 报告数据。
+
+            **何时使用**:用户询问"我最近的报告/血糖控制怎么样""上次监测情况""TIR 达标了吗"
+            等需要看历史血糖监测数据的问题。
+
+            Returns:
+                str: 报告关键字段的 JSON 字符串(含 monitoring 时段、TIR/TAR/TBR、MG/SD/CV、
+                  患者病史和目标范围)。若用户没有任何报告则返回提示。可以把此结果作为后续 CGM
+                  解读 Skill 的输入。
+            """
+            report = await CGMReportDao.get_latest_by_user(self.agent_config.user_id)
+            if not report:
+                return "用户尚未上传过 CGM 报告。"
+            return json.dumps(cgm_report_to_dict(report, slim=True), ensure_ascii=False)
+
         tools = [
             get_current_beijing_time,
             analyze_uploaded_image,
@@ -241,6 +297,8 @@ class AnTangAgent(GeneralAgent):
             get_diet_support,
             get_exercise_support,
             text_to_image,
+            import_cgm_report,
+            get_latest_cgm_report,
         ]
 
         # 这份映射用于 GeneralAgent 的工具事件展示，把函数名翻译成前端更友好的名称。
@@ -254,6 +312,8 @@ class AnTangAgent(GeneralAgent):
                 "get_diet_support": {"name": "饮食建议", "type": "安糖能力"},
                 "get_exercise_support": {"name": "运动建议", "type": "安糖能力"},
                 "text_to_image": {"name": "图片生成", "type": "安糖能力"},
+                "import_cgm_report": {"name": "导入 CGM 报告", "type": "安糖能力"},
+                "get_latest_cgm_report": {"name": "查看最近 CGM 报告", "type": "安糖能力"},
             }
         )
         return tools
@@ -312,6 +372,8 @@ class AnTangAgent(GeneralAgent):
             file_name=file_name,
             relevant_memory=[],
         )
+        # 缓存本轮 understanding，供 finalize_turn 里 update_profile 当判断依据使用。
+        self.last_analyzer_understanding = analyzer_result.memo.understanding
 
         memory_ctx = await recall_task if recall_task else None  # 一般已经准备好了
         long_term_memory = self._format_long_term_memory_block(memory_ctx)
@@ -461,15 +523,22 @@ class AnTangAgent(GeneralAgent):
         user_input: str,
         assistant_response: str,
     ) -> None:
-        """把本轮对话写入长期记忆。
+        """把本轮对话写入长期记忆 + 更新结构化画像。
 
-        写入流程包含 LLM 抽事实 + LLM 合并去重 + 多次 embedding，整体 3~10 秒，
-        所以走 fire-and-forget，不阻塞 SSE 关闭。
-        画像更新（update_profile）有意不开，等召回 + 写入这条线跑稳再单独开关。
+        两条线都走 fire-and-forget，不阻塞 SSE 关闭：
+        - store_turn_memory：LLM 抽事实 + 合并去重 + embedding，3~10 秒。
+        - update_profile：LLM 把"旧画像 + 本轮对话"合成新画像，2~5 秒。
         """
         if not self.agent_config.user_id or not assistant_response.strip():
             return
         asyncio.create_task(self._store_turn_memory_safely(user_input, assistant_response))
+        asyncio.create_task(
+            self._update_profile_safely(
+                user_input=user_input,
+                assistant_response=assistant_response,
+                assessment_reason=self.last_analyzer_understanding,
+            )
+        )
 
     async def _store_turn_memory_safely(self, user_input: str, assistant_response: str) -> None:
         try:
@@ -483,6 +552,26 @@ class AnTangAgent(GeneralAgent):
             )
         except Exception as err:
             logger.warning(f"[antang-memory] 写入长期记忆失败: {err}")
+
+    async def _update_profile_safely(
+        self,
+        *,
+        user_input: str,
+        assistant_response: str,
+        assessment_reason: str,
+    ) -> None:
+        try:
+            await asyncio.wait_for(
+                AnTangProfileService.update_profile(
+                    user_id=self.agent_config.user_id,
+                    user_input=user_input,
+                    assistant_response=assistant_response,
+                    assessment_reason=assessment_reason,
+                ),
+                timeout=30.0,
+            )
+        except Exception as err:
+            logger.warning(f"[antang-profile] 更新结构化画像失败: {err}")
 
     @staticmethod
     def _format_long_term_memory_block(ctx: AnTangMemoryContext | None) -> str | None:

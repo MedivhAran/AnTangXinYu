@@ -1,4 +1,4 @@
-from typing import Sequence, List
+from typing import Sequence, List, Optional
 
 from sqlmodel import delete, select
 from AnTang.database.session import async_session_getter
@@ -38,6 +38,16 @@ class AgentSkillDao:
         async with async_session_getter() as session:
             statement = select(AgentSkill).where(
                 AgentSkill.id == agent_skill_id
+            )
+            result = await session.exec(statement)
+            return result.first()
+
+    @classmethod
+    async def get_agent_skill_by_name(cls, name: str, user_id: str) -> Optional[AgentSkill]:
+        async with async_session_getter() as session:
+            statement = select(AgentSkill).where(
+                AgentSkill.name == name,
+                AgentSkill.user_id == user_id,
             )
             result = await session.exec(statement)
             return result.first()

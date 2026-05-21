@@ -3,7 +3,6 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
-from AnTang.api.services.mcp_user_config import MCPUserConfigService
 from AnTang.core.agents.structured_response_agent import StructuredResponseAgent
 from AnTang.database.dao.mcp_server import MCPServerDao
 from AnTang.database.models.user import AdminUser, SystemUser
@@ -93,12 +92,7 @@ class MCPService:
             personal_servers = await MCPServerDao.get_mcp_servers_from_user(user_id)
             admin_servers = await MCPServerDao.get_mcp_servers_from_user(SystemUser)
             all_servers = personal_servers + admin_servers
-        all_servers = [server.to_dict() for server in all_servers]
-        for server in all_servers:
-            user_config = await MCPUserConfigService.show_mcp_user_config(user_id, server["mcp_server_id"])
-            if user_config.get("config"):
-                server["config"] = user_config.get("config")
-        return all_servers
+        return [server.to_dict() for server in all_servers]
 
     @classmethod
     async def mcp_server_need_update(cls):

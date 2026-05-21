@@ -5,8 +5,6 @@ import { ElMessage } from 'element-plus'
 import { Plus, Edit, Delete, View, Search, Refresh, Tools } from '@element-plus/icons-vue'
 import robotIcon from '../../assets/robot.svg'
 import pluginIcon from '../../assets/plugin.svg'
-import mcpIcon from '../../assets/mcp.svg'
-import skillIcon from '../../assets/skill.svg'
 import { 
   getAgentsAPI, 
   deleteAgentAPI, 
@@ -37,7 +35,6 @@ const convertToAgent = (apiAgent: any): Agent => ({
   mcp_ids: apiAgent.mcp_ids || [],
   system_prompt: apiAgent.system_prompt,
   agent_skill_ids: apiAgent.agent_skill_ids || [],
-  enable_memory: apiAgent.enable_memory,
   created_time: apiAgent.create_time || apiAgent.created_time,
   is_custom: apiAgent.is_custom // 新增is_custom字段
 })
@@ -116,7 +113,6 @@ const searchAgents = async () => {
         mcp_ids: [],
         system_prompt: '',
         agent_skill_ids: [],
-        enable_memory: false,
         is_custom: false // 搜索结果默认为系统智能体
       }))
     } else {
@@ -326,14 +322,6 @@ onMounted(() => {
               <span class="meta-item" title="可用工具数量">
                 <img :src="pluginIcon" class="meta-icon-img" alt="工具" />
                 <span class="meta-count">{{ agent.tool_ids?.length || 0 }}</span>
-              </span>
-              <span class="meta-item" title="MCP服务数量">
-                <img :src="mcpIcon" class="meta-icon-img" alt="MCP" />
-                <span class="meta-count">{{ agent.mcp_ids?.length || 0 }}</span>
-              </span>
-              <span class="meta-item" title="Skill数量">
-                <img :src="skillIcon" class="meta-icon-img" alt="Skill" />
-                <span class="meta-count">{{ agent.agent_skill_ids?.length || 0 }}</span>
               </span>
             </div>
           </div>

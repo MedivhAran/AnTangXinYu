@@ -201,6 +201,18 @@ tools:
     endpoint: "https://api.bochaai.com/v1/web-search"
 
 
+# ============== [可选] 系统 MCP Server 凭证 ==============
+# MCP / Agent Skill 已经收归后端开发者管理，前端用户不再能创建或编辑。
+# 顶层 key 必须与 src/backend/AnTang/config/mcp_server.json 中的 server_name 一致，
+# 子 key 对应该 MCP server 工具调用时需要附加的参数名。
+# 未在此声明的 MCP server（高德 / 必应）视为不需要密钥。
+# 想接入飞书：去开放平台拿 app_id / app_secret 填到下面即可。
+mcp_credentials:
+  飞书:
+    app_id: ""
+    app_secret: ""
+
+
 # ============== [无需修改] RAG 检索配置 ==============
 rag:
   enable_summary: False         # 安糖走 content 检索，关掉摘要省 LLM 调用
@@ -259,6 +271,10 @@ bootstrap:
   init_default_tools: true
   init_system_mcp: true
   refresh_system_mcp_on_startup: false
+  # 系统 Skill 自动 seed：扫描 src/backend/AnTang/skills/ 下目录写入 agent_skill 表
+  init_system_skills: true
+  # 启动时强制覆盖已存在的同名系统 Skill（开发调试时打开，生产环境保持 false）
+  refresh_system_skills_on_startup: false
 
 
 # ============== [可选] Langfuse 追踪 ==============
@@ -273,7 +289,7 @@ langfuse:
 
 
 # ============== [无需修改] 接口白名单 ==============
-whitelist_paths: ["/api/v1/mcp/*"]
+whitelist_paths: []
 
 
 # ============== [可选] 安糖轻量分析器行为开关 ==============

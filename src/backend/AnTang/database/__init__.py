@@ -19,9 +19,7 @@ from AnTang.database.models.message import MessageDownTable, MessageLikeTable
 from AnTang.database.models.role import Role
 from AnTang.database.models.usage_stats import UsageStats
 from AnTang.database.models.agent_skill import AgentSkill
-from AnTang.database.models.register_mcp import RegisterMcpServer
-from AnTang.database.models.register_task import RegisterMcpTask
-from AnTang.database.models.register_mcp_tool import RegisterMcpTool
+from AnTang.database.models.cgm_report import CGMReportTable
 from AnTang.settings import app_settings
 
 

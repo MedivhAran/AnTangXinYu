@@ -45,5 +45,6 @@ docker/data/
 chroma_db/
 memory_db/
 vector_db/
+CGM/
 
 # 

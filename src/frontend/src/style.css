@@ -142,13 +142,6 @@
     z-index: 2000 !important;
 }
 
-/* 确保页面内容可以正常交互 */
-.mcp-server-page {
-    position: relative !important;
-    z-index: 1 !important;
-    pointer-events: auto !important;
-}
-
 /* 修复可能的遮罩问题 */
 body {
     pointer-events: auto !important;

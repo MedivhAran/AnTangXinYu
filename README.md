@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-详细架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+详细架构见 [docs/development/项目理解指南.md](docs/development/项目理解指南.md)。
 
 
 ## 第一种部署方式：Docker（强烈强烈推荐）

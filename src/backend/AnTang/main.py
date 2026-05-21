@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import warnings
-import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
@@ -11,7 +10,6 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from AnTang.api.JWT import Settings as AuthJwtSettings
-from AnTang.mcp_proxy.session.manager import SessionManager
 from AnTang.middleware.trace_id_middleware import TraceIDMiddleware
 from AnTang.middleware.white_list_middleware import WhitelistMiddleware
 from AnTang.settings import init_app_settings
@@ -109,9 +107,6 @@ async def _bootstrap_antang_knowledge(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     await init_config()
 
-    redis_client = aioredis.from_url(app_settings.redis.get("endpoint"), decode_responses=True)
-    app.state.session_manager = SessionManager(redis_client)
-
     await register_router(app)
     await _bootstrap_antang_knowledge(app)
     print_logo()
@@ -121,8 +116,6 @@ async def lifespan(app: FastAPI):
     sync_task = getattr(app.state, "antang_kb_sync_task", None)
     if sync_task:
         logger.info(f"[antang-kb] shutdown 时后台同步任务完成状态: {sync_task.done()}")
-
-    await redis_client.close()
 
 
 def create_app():

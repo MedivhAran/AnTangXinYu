@@ -10,7 +10,6 @@ export interface AgentCreateRequest {
   mcp_ids: string[]
   system_prompt: string
   agent_skill_ids?: string[]
-  enable_memory: boolean
 }
 
 export interface AgentUpdateRequest {
@@ -23,7 +22,6 @@ export interface AgentUpdateRequest {
   mcp_ids?: string[]
   system_prompt?: string
   agent_skill_ids?: string[]
-  enable_memory?: boolean
 }
 
 export interface AgentResponse {
@@ -36,7 +34,6 @@ export interface AgentResponse {
   mcp_ids: string[]
   system_prompt: string
   agent_skill_ids?: string[]
-  enable_memory: boolean
 }
 
 export interface ApiResponse<T> {

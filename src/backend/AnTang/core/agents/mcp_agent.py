@@ -8,10 +8,10 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langchain.agents.middleware import AgentState, wrap_tool_call, before_agent
 
-from AnTang.api.services.mcp_user_config import MCPUserConfigService
 from AnTang.core.models.manager import ModelManager
 from AnTang.prompts.completion import CALL_END_PROMPT
 from AnTang.services.mcp.manager import MCPManager
+from AnTang.settings import app_settings
 from AnTang.utils.convert import convert_mcp_config
 
 
@@ -72,8 +72,9 @@ class MCPAgent:
                 }
             )
 
-            # 针对鉴权的MCP Server需要用户的单独配置，例如飞书、邮箱
-            mcp_config = await MCPUserConfigService.get_mcp_user_config(self.user_id, self.mcp_config.mcp_server_id)
+            # MCP Server 鉴权凭证统一从后端配置文件读取（config.yaml 的 mcp_credentials 段）。
+            # 顶层 key 是 mcp_server.json 中的 server_name。无配置则视为不需要密钥。
+            mcp_config = app_settings.mcp_credentials.get(self.mcp_config.server_name, {})
             request.tool_call["args"].update(mcp_config)
 
             tool_result = await handler(request)

@@ -51,6 +51,10 @@ class BootstrapConfig(BaseModel):
     init_default_tools: bool = True
     init_system_mcp: bool = True
     refresh_system_mcp_on_startup: bool = False
+    # 系统 Skill 自动 seed：扫描 src/backend/AnTang/skills/ 下目录写入 agent_skill 表。
+    init_system_skills: bool = True
+    # 启动时强制覆盖已存在的同名系统 Skill（开发调试用，默认关）。
+    refresh_system_skills_on_startup: bool = False
 
 
 

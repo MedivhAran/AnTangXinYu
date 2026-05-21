@@ -1,8 +1,9 @@
 """安糖心语的长期画像与长期记忆服务。
 
-当前主对话流程里暂时关闭了 finalize_turn 的画像写入，
-但这里保留了用户画像读取、长期记忆召回和画像更新能力，
-方便后续把“低血糖时段、诱因、安抚偏好”等信息接回 Agent。
+主对话循环里三件事的接通状态：
+- recall_context 已通：每轮对话开始时召回画像 + 向量记忆，拼进 system prompt
+- store_turn_memory 已通：每轮对话结束后 fire-and-forget 写入向量库
+- update_profile 已通：每轮对话结束后 fire-and-forget 用 LLM 抽事实更新画像
 """
 
 import asyncio
@@ -14,7 +15,6 @@ from AnTang.database.dao.antang_profile import AnTangProfileDao
 from AnTang.services.antang.policies import ANTANG_AGENT_TYPE
 from AnTang.services.antang.state import (
     AnTangMemoryContext,
-    AnTangStateAssessment,
     AnTangUserProfile,
 )
 from AnTang.services.memory.client import memory_client
@@ -131,21 +131,24 @@ class AnTangProfileService:
         user_id: str,
         user_input: str,
         assistant_response: str,
-        assessment: AnTangStateAssessment,
-        capability_outputs: Iterable[str],
+        assessment_reason: str = "",
+        capability_outputs: Iterable[str] = (),
         last_memory_excerpt: str | None = None,
     ) -> AnTangUserProfile:
         """根据本轮对话更新结构化用户画像。
 
         StructuredResponseAgent 会强制模型输出 AnTangUserProfile 结构；
         如果模型更新失败，则保留当前画像，避免因为画像维护影响正常聊天。
+
+        assessment_reason 是 light_analyzer 对本轮上下文的简短判断（通常用
+        memo.understanding 字段），帮助 LLM 决定哪些信息值得沉淀到长期画像。
         """
         current_profile = await cls.get_profile(user_id)
         prompt = PROFILE_UPDATE_PROMPT.format(
             profile_json=json.dumps(current_profile.model_dump(), ensure_ascii=False, indent=2),
             user_input=user_input,
             assistant_response=assistant_response,
-            assessment_reason=assessment.reason or "无",
+            assessment_reason=assessment_reason or "无",
             capability_summary="\n".join(capability_outputs) or "无",
         )
         updater = StructuredResponseAgent(AnTangUserProfile)

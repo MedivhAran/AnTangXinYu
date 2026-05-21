@@ -1,5 +1,5 @@
 import yaml
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 from loguru import logger
 from types import SimpleNamespace
 from pydantic.v1 import BaseSettings, Field
@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     whitelist_paths: list = []
     default_config: dict = {}
     bootstrap: Optional[BootstrapConfig] = BootstrapConfig()
+    # 顶层 key 是 mcp_server.json 中的 server_name；值是 tool 调用时合并到 args 的字典。
+    # 替代旧的 MCPUserConfigTable，让密钥统一在后端配置文件里管。
+    mcp_credentials: Dict[str, Dict[str, str]] = {}
 
     server: Optional[ServerConfig] = ServerConfig()
     rag: Optional[Rag] = None

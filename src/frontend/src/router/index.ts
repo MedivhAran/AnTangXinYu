@@ -10,10 +10,7 @@ import Login from '../pages/login'
 import { Register } from '../pages/login'
 import Agent from '../pages/agent'
 import AgentEditor from '../pages/agent/agent-editor.vue'
-import McpServer from '../pages/mcp-server'
-import McpChat from '../pages/mcp-server/mcp-chat.vue'
 import Tool from '../pages/tool'
-import AgentSkill from '../pages/agent-skill'
 import Model from '../pages/model'
 import ModelEditor from '../pages/model/model-editor.vue'
 import Profile from '../pages/profile'
@@ -93,36 +90,12 @@ const routes: RouteRecordRaw[] = [
         component: AgentEditor,
       },
       {
-        path: '/mcp-server',
-        name: 'mcp-server',
-        meta: {
-          current: 'mcp-server'
-        },
-        component: McpServer,
-      },
-      {
-        path: '/mcp-server/chat',
-        name: 'mcp-chat',
-        meta: {
-          current: 'mcp-chat'
-        },
-        component: McpChat,
-      },
-      {
         path: '/tool',
         name: 'tool',
         meta: {
           current: 'tool'
         },
         component: Tool,
-      },
-      {
-        path: '/agent-skill',
-        name: 'agent-skill',
-        meta: {
-          current: 'agent-skill'
-        },
-        component: AgentSkill,
       },
       {
         path: '/model',

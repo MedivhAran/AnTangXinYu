@@ -60,11 +60,9 @@ class AgentConfig(BaseModel):
     user_id: str  # 绑定的用户id
     llm_id: str  # 绑定的语言模型id
     mcp_ids: List[str]  # 绑定的MCP服务器id列表
-    knowledge_ids: List[str]  # 历史兼容字段，普通 Agent 不再使用知识库
     tool_ids: List[str]  # 绑定的工具id列表
     agent_skill_ids: List[str]  # 绑定的技能Agent id列表
     system_prompt: str  # 系统提示词
-    enable_memory: bool = False  # 是否启用记忆功能
     name: str = None  # Agent的名称
 
 
@@ -294,7 +292,7 @@ class GeneralAgent:
                 messages = await skill_agent.ainvoke([HumanMessage(content=query)])
                 return "\n".join([message.content for message in messages])
 
-            return call_skill_agent
+            return call_skill_agent  # 注意这里返回的是 tool 函数，不是函数的调用结果
 
         for agent_skill in agent_skills:
             # 记录展示名，前端工具事件里显示 Skill 的中文名。

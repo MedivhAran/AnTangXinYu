@@ -8,7 +8,6 @@ class AgentCreateReq(BaseModel):
     llm_id: Optional[str] = Field(None, description="Agent 绑定的LLM ID")
     mcp_ids: List[str] = Field(default=[], description="绑定的MCP Server")
     agent_skill_ids: List[str] = Field(default=[], description="绑定的技能")
-    enable_memory: bool = Field(True, description="是否使用嵌入")
     system_prompt: str = Field(..., description="Agent 系统提示词")
     logo_url: str = Field(..., description="Logo URL")
 
@@ -21,7 +20,6 @@ class AgentUpdateReq(BaseModel):
     mcp_ids: Optional[List[str]] = Field(None, description="绑定的MCP Server")
     llm_id: Optional[str] = Field(None, description="Agent 绑定的LLM ID")
     agent_skill_ids: List[str] = Field(default=[], description="绑定的技能")
-    enable_memory: Optional[bool] = Field(True, description="是否使用嵌入")
     logo_url: Optional[str] = Field(None, description="Logo URL")
     system_prompt: str = Field(None, description="Agent 系统提示词")
 

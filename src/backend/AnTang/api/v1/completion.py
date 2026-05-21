@@ -148,7 +148,7 @@ async def completion(*, req: CompletionReq, login_user: UserPayload = Depends(ge
                     user_input=raw_input,
                     assistant_response=response_content,
                 )
-                # ↑ 内部 asyncio.create_task 后台跑长期记忆写入，立即返回
+                # ↑ 内部 asyncio.create_task 后台进行长期记忆写入，立即返回
 
             except Exception as err:
                 logger.warning(f"Finalize completion turn failed: {err}")
