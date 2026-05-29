@@ -41,9 +41,7 @@ class ReminderDao:
         """取消提醒（软删，status=cancelled）。双重校验 user_id 防越权。"""
         async with async_session_getter() as session:
             statement = (
-                select(ReminderTable)
-                .where(ReminderTable.id == reminder_id)
-                .where(ReminderTable.user_id == user_id)
+                select(ReminderTable).where(ReminderTable.id == reminder_id).where(ReminderTable.user_id == user_id)
             )
             result = await session.exec(statement)
             reminder = result.first()
@@ -65,9 +63,7 @@ class ReminderDao:
         now = _now()
         async with async_session_getter() as session:
             statement = (
-                select(ReminderTable)
-                .where(ReminderTable.status == "pending")
-                .where(ReminderTable.next_fire_at <= now)
+                select(ReminderTable).where(ReminderTable.status == "pending").where(ReminderTable.next_fire_at <= now)
             )
             result = await session.exec(statement)
             due = list(result.all())

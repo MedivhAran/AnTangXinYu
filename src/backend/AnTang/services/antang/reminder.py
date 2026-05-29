@@ -19,7 +19,6 @@ from AnTang.services.antang.profile import AnTangProfileService
 from AnTang.settings import app_settings
 from AnTang.utils.common import count_tokens_usage
 
-
 _REMINDER_SYSTEM_PROMPT = (
     "你是安糖心语，一个温暖的糖尿病陪伴助手。现在正是你之前答应过用户、要提醒 TA 的时间点。"
     "请根据【提醒事项】和【用户画像】，生成一句简短、自然、有温度的主动提醒。"
@@ -59,10 +58,7 @@ class ReminderService:
         try:
             profile = await AnTangProfileService.get_profile(reminder.user_id)
             profile_summary = (profile.summary or "").strip() if profile else ""
-            user_message = (
-                f"【提醒事项】\n{reminder.content}\n\n"
-                f"【用户画像】\n{profile_summary or '暂无'}"
-            )
+            user_message = f"【提醒事项】\n{reminder.content}\n\n" f"【用户画像】\n{profile_summary or '暂无'}"
             model = await cls._get_model()
             response = await asyncio.wait_for(
                 model.bind(max_tokens=cfg.max_output_tokens).ainvoke(
@@ -121,11 +117,11 @@ async def reminder_heartbeat_loop() -> None:
     interval = max(5, app_settings.reminder.check_interval_seconds)
     logger.info(f"[reminder] 心跳循环启动，间隔 {interval}s")
     while True:
-        await asyncio.sleep(interval)
+        await asyncio.sleep(interval)  # 先睡 30 秒
         if not app_settings.reminder.enabled:
             continue
         try:
-            due = await ReminderDao.claim_due()
+            due = await ReminderDao.claim_due()  # 认领到期提醒（更新状态为 processing，避免重复触发）
             for reminder in due:
                 await ReminderService.fire(reminder)
         except Exception as err:
