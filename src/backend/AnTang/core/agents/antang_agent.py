@@ -301,7 +301,7 @@ class AnTangAgent(GeneralAgent):
             recurrence: str = "once",
             repeat_count: int | None = None,
         ) -> str:
-            """创建一个定时提醒，到点后我会主动给用户发消息提醒。
+            """创建一个定时提醒，到点后主动给用户发消息提醒。
 
             当用户要求"提醒我做某事""到点叫我""每天/每周定时提醒"等时使用。设置前先调用
             get_current_beijing_time 获取当前时间，把"明天早上8点""半小时后"这类相对时间
@@ -339,8 +339,7 @@ class AnTangAgent(GeneralAgent):
             )
             await ReminderDao.create(reminder)
             return (
-                f"已设置提醒：{content}（{_RECURRENCE_DESC[recurrence]}，下次 {fire_time}）。"
-                f"到点我会主动提醒你。"
+                f"已设置提醒：{content}（{_RECURRENCE_DESC[recurrence]}，下次 {fire_time}）。" f"到点我会主动提醒你。"
             )
 
         @tool(parse_docstring=True)
@@ -481,6 +480,7 @@ class AnTangAgent(GeneralAgent):
             base_prompt=DEFAULT_ANTANG_SYSTEM_PROMPT,
             analyzer_result=analyzer_result,
             glucose_zone=glucose_zone,
+            current_beijing_time=_format_beijing_datetime(),
         )
         system_prompt = build_completion_system_prompt(turn_prompt, history_summary, long_term_memory)
 

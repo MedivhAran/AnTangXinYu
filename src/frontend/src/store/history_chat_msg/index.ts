@@ -50,6 +50,8 @@ function buildEventInfoFromEvents(events: any): any[] {
   const eventMap = new Map<string, any>();
   events.forEach((event: EventData) => {
     if (event.type === 'heartbeat') return;
+    // 主动提醒标记只用于识别消息类型，不作为工具事件卡片展示
+    if ((event.data as any)?.event_type === 'proactive_reminder') return;
     const eventTitle = event.data?.title || event.type || '事件';
     const currentStatus = event.data?.status || 'END';
     if (!eventMap.has(eventTitle) ||
