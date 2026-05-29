@@ -42,6 +42,50 @@ export const buildDialogTitleFromMessage = (message: string) => {
   return `${titleSource.slice(0, DIALOG_TITLE_MAX_LENGTH)}...`
 }
 
+// 把一条 assistant 消息的 events 去重转换成前端 eventInfo（按 title 取最终状态，过滤 heartbeat）。
+function buildEventInfoFromEvents(events: any): any[] {
+  if (!events || !Array.isArray(events)) {
+    return []
+  }
+  const eventMap = new Map<string, any>();
+  events.forEach((event: EventData) => {
+    if (event.type === 'heartbeat') return;
+    const eventTitle = event.data?.title || event.type || '事件';
+    const currentStatus = event.data?.status || 'END';
+    if (!eventMap.has(eventTitle) ||
+        currentStatus === 'END' ||
+        currentStatus === 'ERROR') {
+      eventMap.set(eventTitle, event);
+    }
+  });
+  return Array.from(eventMap.values()).map((event: EventData) => ({
+    event_type: event.data?.title || event.type || '事件',
+    message: event.data?.message || JSON.stringify(event.data),
+    status: event.data?.status || 'END',
+    show: false,
+    tags: event.data?.tags || [],
+    details: event.data?.details || {}
+  }));
+}
+
+// 主动提醒消息：后端在 events 里打了 proactive_reminder 标记，且没有前置用户消息。
+function isProactiveReminder(msg: any): boolean {
+  if (!msg || !Array.isArray(msg.events)) return false
+  return msg.events.some((event: any) => event?.data?.event_type === 'proactive_reminder')
+}
+
+// 从用户消息的 events 里抽出附件信息。
+function extractUserAttachment(msg: any): { fileUrl?: string; fileName?: string } {
+  if (!msg.events || !Array.isArray(msg.events)) {
+    return {}
+  }
+  const attachmentEvent = msg.events.find((event: EventData) => event.type === 'attachment')
+  if (attachmentEvent?.data?.file_url) {
+    return { fileUrl: attachmentEvent.data.file_url, fileName: attachmentEvent.data.file_name || '' }
+  }
+  return {}
+}
+
 export const useHistoryChatStore = defineStore('history_chat_msg', () => {
   const chatArr = ref<ChatMessage[]>([])
   const dialogId = ref('')
@@ -82,14 +126,14 @@ export const useHistoryChatStore = defineStore('history_chat_msg', () => {
     chatArr.value = [] // 清空现有消息
     loading.value = true
     error.value = ''
-    
+
     try {
       const response = await getHistoryMsgAPI(id)
       console.log('【HistoryChat】历史消息API返回:', response.data)
-      
+
       if (response.data.status_code === 200 && Array.isArray(response.data.data)) {
         const messages = response.data.data
-        
+
         // 设置会话信息
         if (messages.length > 0 && messages[0].dialog_name) {
           name.value = messages[0].dialog_name || '新对话'
@@ -103,124 +147,46 @@ export const useHistoryChatStore = defineStore('history_chat_msg', () => {
         if (firstUserMessage) {
           void renameDefaultDialogByMessage(id, firstUserMessage.content)
         }
-        
-        // 处理消息对
-        for (let i = 0; i < messages.length; i += 2) {
-          if (i + 1 >= messages.length) {
-            // 如果只剩最后一条消息，单独处理
-            const lastMsg = messages[i]
+
+        // 单遍分组：一条 user + 紧随其后的 assistant 合成一对；没有前置 user 的 assistant
+        // （如到点主动提醒）单独成一条。这样能正确渲染"凭空出现的助手消息"，
+        // 也不会因为它打乱后续的用户/助手配对。
+        const grouped: ChatMessage[] = []
+        let i = 0
+        while (i < messages.length) {
+          const msg = messages[i]
+
+          if (msg.role === 'user') {
+            const attachment = extractUserAttachment(msg)
             const chatMsg: ChatMessage = {
-              personMessage: { content: '' },
+              personMessage: { content: msg.content, ...attachment },
               aiMessage: { content: '' },
               eventInfo: []
             }
-            
-            if (lastMsg.role === 'user') {
-              chatMsg.personMessage.content = lastMsg.content
-              if (lastMsg.events && Array.isArray(lastMsg.events)) {
-                const attachmentEvent = lastMsg.events.find((event: EventData) => event.type === 'attachment')
-                if (attachmentEvent?.data?.file_url) {
-                  chatMsg.personMessage.fileUrl = attachmentEvent.data.file_url
-                  chatMsg.personMessage.fileName = attachmentEvent.data.file_name || ''
-                }
-              }
-            } else if (lastMsg.role === 'assistant') {
-              chatMsg.aiMessage.content = lastMsg.content
-              
-              // 处理events字段，转换为eventInfo格式
-              if (lastMsg.events && Array.isArray(lastMsg.events)) {
-                // 使用Map来存储每个title的最终事件状态
-                const eventMap = new Map<string, any>();
-                
-                // 遍历所有事件，按title分组，并过滤掉heartbeat类型的事件
-                lastMsg.events.forEach((event: EventData) => {
-                  // 跳过heartbeat类型的事件
-                  if (event.type === 'heartbeat') return;
-                  
-                  const eventTitle = event.data?.title || event.type || '事件';
-                  const currentStatus = event.data?.status || 'END';
-                  
-                  // 如果是新事件或者当前事件是END/ERROR状态，则更新Map
-                  if (!eventMap.has(eventTitle) || 
-                      currentStatus === 'END' || 
-                      currentStatus === 'ERROR') {
-                    eventMap.set(eventTitle, event);
-                  }
-                });
-                
-                // 将Map中的事件转换为eventInfo数组
-                chatMsg.eventInfo = Array.from(eventMap.values()).map((event: EventData) => {
-                  return {
-                    event_type: event.data?.title || event.type || '事件',
-                    message: event.data?.message || JSON.stringify(event.data),
-                    status: event.data?.status || 'END',
-                    show: false,
-                    tags: event.data?.tags || [],
-                    details: event.data?.details || {}
-                  }
-                });
-              }
+            // 紧随其后的 assistant 视为对本条用户消息的回复；但主动提醒永远独立成条，不并进来
+            if (i + 1 < messages.length && messages[i + 1].role === 'assistant' && !isProactiveReminder(messages[i + 1])) {
+              const aiMsg = messages[i + 1]
+              chatMsg.aiMessage.content = aiMsg.content
+              chatMsg.eventInfo = buildEventInfoFromEvents(aiMsg.events)
+              i += 2
+            } else {
+              i += 1
             }
-            
-            chatArr.value.push(chatMsg)
-            continue
+            grouped.push(chatMsg)
+          } else if (msg.role === 'assistant') {
+            // 没有前置用户消息的 assistant（主动提醒），personMessage 留空，并标记类型供前端区分
+            grouped.push({
+              personMessage: { content: '' },
+              aiMessage: { content: msg.content, type: isProactiveReminder(msg) ? 'reminder' : undefined },
+              eventInfo: buildEventInfoFromEvents(msg.events)
+            })
+            i += 1
+          } else {
+            i += 1
           }
-          
-          // 正常处理一对消息
-          const userMsg = messages[i].role === 'user' ? messages[i] : messages[i+1]
-          const aiMsg = messages[i].role === 'assistant' ? messages[i] : messages[i+1]
-          
-          const chatMsg: ChatMessage = {
-            personMessage: { content: userMsg.role === 'user' ? userMsg.content : '' },
-            aiMessage: { content: aiMsg.role === 'assistant' ? aiMsg.content : '' },
-            eventInfo: []
-          }
-
-          if (userMsg.role === 'user' && userMsg.events && Array.isArray(userMsg.events)) {
-            const attachmentEvent = userMsg.events.find((event: EventData) => event.type === 'attachment')
-            if (attachmentEvent?.data?.file_url) {
-              chatMsg.personMessage.fileUrl = attachmentEvent.data.file_url
-              chatMsg.personMessage.fileName = attachmentEvent.data.file_name || ''
-            }
-          }
-          
-          // 处理AI消息的events字段，转换为eventInfo格式
-          if (aiMsg.role === 'assistant' && aiMsg.events && Array.isArray(aiMsg.events)) {
-            // 使用Map来存储每个title的最终事件状态
-            const eventMap = new Map<string, any>();
-            
-            // 遍历所有事件，按title分组，并过滤掉heartbeat类型的事件
-            aiMsg.events.forEach((event: EventData) => {
-              // 跳过heartbeat类型的事件
-              if (event.type === 'heartbeat') return;
-              
-              const eventTitle = event.data?.title || event.type || '事件';
-              const currentStatus = event.data?.status || 'END';
-              
-              // 如果是新事件或者当前事件是END/ERROR状态，则更新Map
-              if (!eventMap.has(eventTitle) || 
-                  currentStatus === 'END' || 
-                  currentStatus === 'ERROR') {
-                eventMap.set(eventTitle, event);
-              }
-            });
-            
-            // 将Map中的事件转换为eventInfo数组
-            chatMsg.eventInfo = Array.from(eventMap.values()).map((event: EventData) => {
-              return {
-                event_type: event.data?.title || event.type || '事件',
-                message: event.data?.message || JSON.stringify(event.data),
-                status: event.data?.status || 'END',
-                show: false,
-                tags: event.data?.tags || [],
-                details: event.data?.details || {}
-              }
-            });
-          }
-          
-          chatArr.value.push(chatMsg)
         }
-        
+
+        chatArr.value = grouped
         console.log('【HistoryChat】处理后的消息数组:', chatArr.value)
       } else {
         console.error('【HistoryChat】API返回错误:', response.data)
@@ -235,7 +201,7 @@ export const useHistoryChatStore = defineStore('history_chat_msg', () => {
       loading.value = false
     }
   }
-  
+
   /**
    * 清空聊天记录
    */
@@ -244,14 +210,26 @@ export const useHistoryChatStore = defineStore('history_chat_msg', () => {
     error.value = ''
   }
 
+  /**
+   * 追加一条主动提醒消息（到点心跳推送、且当前正打开该会话时实时插入）。
+   */
+  function appendProactiveMessage(content: string) {
+    chatArr.value.push({
+      personMessage: { content: '' },
+      aiMessage: { content, type: 'reminder' },
+      eventInfo: []
+    })
+  }
+
   function notifyDialogListRefresh() {
     dialogListRefreshToken.value += 1
   }
-  
-  return { 
-    chatArr, 
+
+  return {
+    chatArr,
     HistoryChat,
     clear,
+    appendProactiveMessage,
     dialogId,
     name,
     logo,

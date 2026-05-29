@@ -1,8 +1,85 @@
+/* =========================================================
+   安糖心语 · Design tokens（warm cream + coral + mint）
+   ========================================================= */
+:root {
+    /* Surfaces */
+    --bg: #FBF6EF;
+    --bg-soft: #F4EBDE;
+    --bg-warm: #F9EEE2;
+    --card: #FFFFFF;
+    --card-tint: #FFFAF3;
+    --border: rgba(74, 47, 25, 0.08);
+    --border-strong: rgba(74, 47, 25, 0.14);
+
+    /* Brand */
+    --coral: #FF7E5F;
+    --coral-deep: #E65F44;
+    --coral-soft: #FFD6C8;
+    --coral-tint: #FFEDE5;
+    --apricot: #FFB082;
+    --butter: #FFD37A;
+    --mint: #5CC8A6;
+    --mint-soft: #C9EFE0;
+    --mint-tint: #E8F7F0;
+    --berry: #E26A8D;
+    --lilac: #B89BE0;
+
+    /* Text */
+    --ink: #2A1F17;
+    --ink-2: #5A4838;
+    --ink-3: #8C7B6A;
+    --ink-4: #B6A795;
+
+    /* Status */
+    --good: #4FB689;
+    --good-bg: #E4F4EB;
+    --good-text: #2C7757;
+    --warn: #E9A23A;
+    --warn-bg: #FBEFD6;
+    --warn-text: #8E631C;
+    --risk: #E1605A;
+    --risk-bg: #FBE2E0;
+    --risk-text: #B83E36;
+
+    /* Radii */
+    --r-xs: 8px;
+    --r-sm: 12px;
+    --r-md: 18px;
+    --r-lg: 24px;
+    --r-xl: 32px;
+    --r-pill: 999px;
+
+    /* Shadows */
+    --sh-1: 0 1px 2px rgba(74, 47, 25, .04), 0 2px 8px rgba(74, 47, 25, .04);
+    --sh-2: 0 2px 6px rgba(74, 47, 25, .05), 0 12px 28px -8px rgba(74, 47, 25, .12);
+    --sh-3: 0 4px 12px rgba(74, 47, 25, .06), 0 24px 48px -12px rgba(74, 47, 25, .18);
+    --sh-coral: 0 6px 20px -6px rgba(255, 126, 95, 0.55);
+
+    /* Type */
+    --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    --font-num: "Outfit", "Noto Sans SC", -apple-system, sans-serif;
+}
+
 *{
     margin: 0;
     padding: 0;
-    font-family: "Microsoft YaHei";
+    font-family: var(--font-sans);
+    box-sizing: border-box;
 }
+
+body {
+    color: var(--ink);
+    background:
+        radial-gradient(circle at 12% 8%, #FFE8D8 0%, transparent 38%),
+        radial-gradient(circle at 90% 92%, #DDF3E8 0%, transparent 42%),
+        var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: rgba(90, 72, 56, .15); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(90, 72, 56, .28); }
 
 .md-editor {
     background-color:transparent !important;

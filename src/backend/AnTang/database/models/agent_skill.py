@@ -12,28 +12,17 @@ class AgentSkill(SQLModelSerializable, table=True):
     name: str = Field(..., description="Agent Skill的名称")
     description: str = Field(..., description="Agent Skill的描述信息")
     user_id: str = Field(..., description="Agent Skill的拥有者")
-    as_tool_name: str | None = Field(description="Agent Skill当作Tool的名称")
-    folder: Dict | None = Field(
-        sa_column=Column(JSON),
-        description="存放的是Agent Skill的目录以及文件信息"
-    )
+    as_tool_name: str | None = Field(description="Agent Skill作为主Agent的Tool的名称")
+    folder: Dict | None = Field(sa_column=Column(JSON), description="存放的是Agent Skill的目录以及文件信息")
     # 修改时间，默认为当前时间戳，自动更新
     update_time: datetime | None = Field(
         sa_column=Column(
-            DateTime,
-            nullable=False,
-            server_default=text('CURRENT_TIMESTAMP'),
-            onupdate=text('CURRENT_TIMESTAMP')
+            DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
         ),
-        description="修改时间"
+        description="修改时间",
     )
 
     # 创建时间，默认为当前时间戳
     create_time: datetime | None = Field(
-        sa_column=Column(
-            DateTime,
-            nullable=False,
-            server_default=text('CURRENT_TIMESTAMP')
-        ),
-        description="创建时间"
+        sa_column=Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")), description="创建时间"
     )

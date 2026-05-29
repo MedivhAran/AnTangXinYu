@@ -1,26 +1,27 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue"
+import { computed, onMounted, onUnmounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import { ElMessage } from "element-plus"
 
 import histortCard from '../../components/historyCard/histortCard.vue'
-import { getAgentsAPI, type AgentResponse } from "../../apis/agent"
 import { createDialogAPI, deleteDialogAPI, getDialogListAPI } from "../../apis/history"
 import type { DialogCreateType, HistoryListType } from "../../type"
 import { useHistoryChatStore } from "../../store/history_chat_msg"
+import { useNotificationStore } from "../../store/notification"
 
 const router = useRouter()
 const route = useRoute()
 const historyChatStore = useHistoryChatStore()
+const notificationStore = useNotificationStore()
 
 const dialogs = ref<HistoryListType[]>([])
-const agents = ref<AgentResponse[]>([])
 const loading = ref(false)
 const creating = ref(false)
 const selectedDialog = ref("")
 
 const ANTANG_AGENT_NAME = "安糖心语"
 const ANTANG_AGENT_TYPE = "AnTangAgent"
+const isUploadRoute = computed(() => route.path === "/conversation/upload")
 const getDialogDisplayTime = (dialog: any) =>
   dialog.last_active_time || dialog.update_time || dialog.create_time || new Date().toISOString()
 
@@ -63,10 +64,6 @@ const groupedDialogs = computed(() => {
   return groups.filter((group) => group.dialogs.length > 0)
 })
 
-const normalizeAgentId = (agent: AgentResponse) => {
-  return (agent as any).id || agent.agent_id
-}
-
 const buildDialogName = () => {
   const now = new Date()
   return `${ANTANG_AGENT_NAME} · ${now.toLocaleString("zh-CN", {
@@ -98,6 +95,8 @@ const selectDialog = (dialogId: string) => {
   historyChatStore.name = dialog.name
   historyChatStore.logo = dialog.logo
   historyChatStore.agentType = dialog.agentType || ANTANG_AGENT_TYPE
+  // 打开会话即清掉它的未读红点
+  void notificationStore.markDialogRead(dialogId)
 
   router.push({
     path: "/conversation/chatPage",
@@ -106,16 +105,6 @@ const selectDialog = (dialogId: string) => {
       agent_type: dialog.agentType || ANTANG_AGENT_TYPE,
     },
   })
-}
-
-const fetchAgents = async () => {
-  const response = await getAgentsAPI()
-  if (response.data.status_code !== 200) {
-    throw new Error(response.data.status_message || "获取智能体列表失败")
-  }
-  agents.value = response.data.data.filter(
-    (agent) => agent.name === ANTANG_AGENT_NAME || (agent as any).agent_type === ANTANG_AGENT_TYPE
-  )
 }
 
 const fetchDialogs = async () => {
@@ -145,17 +134,10 @@ const createDialog = async () => {
     return
   }
 
-  const agent = agents.value[0]
-  if (!agent) {
-    ElMessage.error("未找到安糖心语智能体")
-    return
-  }
-
   creating.value = true
   try {
     const payload: DialogCreateType = {
       name: buildDialogName(),
-      agent_id: normalizeAgentId(agent),
       agent_type: ANTANG_AGENT_TYPE,
     }
 
@@ -173,6 +155,12 @@ const createDialog = async () => {
     ElMessage.error(error?.message || "创建会话失败")
   } finally {
     creating.value = false
+  }
+}
+
+const goUploadPage = () => {
+  if (route.path !== "/conversation/upload") {
+    router.push("/conversation/upload")
   }
 }
 
@@ -198,7 +186,7 @@ const deleteDialog = async (dialogId: string) => {
 
 const initialize = async () => {
   try {
-    await Promise.all([fetchAgents(), fetchDialogs()])
+    await fetchDialogs()
     const routeDialogId = typeof route.query.dialog_id === "string" ? route.query.dialog_id : ""
     if (routeDialogId) {
       selectedDialog.value = routeDialogId
@@ -228,30 +216,50 @@ watch(
   }
 )
 
-onMounted(initialize)
+onMounted(() => {
+  void initialize()
+  notificationStore.startPolling()
+})
+
+onUnmounted(() => {
+  notificationStore.stopPolling()
+})
 </script>
 
 <template>
   <div class="conversation-main">
     <aside class="sidebar">
-      <div class="brand-card">
-        <div class="brand-row">
-          <div class="brand-mark">糖</div>
-          <div>
-            <div class="brand-title">{{ ANTANG_AGENT_NAME }}</div>
-            <div class="brand-desc">陪你走过每一天</div>
-          </div>
+      <div class="brand">
+        <div class="brand-mark">糖</div>
+        <div class="brand-text">
+          <div class="brand-name">{{ ANTANG_AGENT_NAME }}</div>
+          <div class="brand-tag">陪你走过每一天</div>
         </div>
       </div>
 
-      <button class="create-btn-native" :disabled="creating" @click="createDialog">
-        <span class="create-icon">+</span>
-        <span>{{ creating ? "正在创建..." : "新建对话" }}</span>
-      </button>
+      <div class="side-actions">
+        <button class="btn btn-primary" :disabled="creating" @click="createDialog">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>{{ creating ? "正在创建..." : "新建对话" }}</span>
+        </button>
 
-      <div class="dialog-list">
+        <a class="upload-card" :class="{ active: isUploadRoute }" @click.prevent="goUploadPage">
+          <div class="upload-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" :stroke="isUploadRoute ? '#2C7757' : '#5CC8A6'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <div class="upload-text">
+            <div class="upload-title">上传 CGM 报告</div>
+            <div class="upload-sub">{{ isUploadRoute ? "当前页面" : "PDF / 图片 / 数据导出" }}</div>
+          </div>
+        </a>
+      </div>
+
+      <div class="history">
         <div v-if="loading" class="empty-state">
-          <div class="empty-icon">...</div>
           <div class="empty-text">正在加载会话...</div>
         </div>
 
@@ -263,11 +271,12 @@ onMounted(initialize)
 
         <template v-else>
           <section v-for="group in groupedDialogs" :key="group.label" class="dialog-group">
-            <div class="dialog-group-title">{{ group.label }}</div>
+            <div class="history-section">{{ group.label }}</div>
             <histortCard
               v-for="dialog in group.dialogs"
               :key="dialog.dialogId"
               :item="dialog"
+              :unread="notificationStore.unreadDialogIds.has(dialog.dialogId)"
               :class="{ active: selectedDialog === dialog.dialogId }"
               @select="selectDialog(dialog.dialogId)"
               @delete="deleteDialog(dialog.dialogId)"
@@ -285,125 +294,203 @@ onMounted(initialize)
 
 <style lang="scss" scoped>
 .conversation-main {
-  box-sizing: border-box;
   display: flex;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #f4f2ea;
-}
-
-.conversation-main * {
-  box-sizing: border-box;
+  gap: 18px;
+  padding: 18px;
 }
 
 .sidebar {
-  width: 270px;
+  width: 296px;
   flex-shrink: 0;
   min-height: 0;
-  margin: 20px 0 20px 20px;
-  padding: 20px;
-  border: 1px solid #d8d4c9;
-  border-radius: 12px;
-  background: #fbfaf6;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
-.brand-card {
-  padding: 0 2px;
-  color: #111827;
-}
-
-.brand-row {
+.brand {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(140deg, #FFF7EF 0%, #FFEEDE 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1);
 }
 
 .brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: #4f9d73;
-  color: #ffffff;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #FF8E70 0%, #FFB07A 100%);
+  box-shadow: 0 6px 14px -4px rgba(255, 126, 95, .55), inset 0 1px 0 rgba(255,255,255,.4);
+  color: #fff;
+  font-weight: 800;
+  font-size: 20px;
+  position: relative;
+}
+
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--mint);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  right: -2px;
+  bottom: -2px;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.brand-name {
+  font-weight: 700;
+  font-size: 16.5px;
+  letter-spacing: 0.5px;
+  color: var(--ink);
+}
+
+.brand-tag {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+
+.side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  font-weight: 800;
-}
-
-.brand-title {
-  font-size: 20px;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-
-.brand-desc {
-  font-size: 14px;
-  line-height: 1.6;
-  color: #8a8174;
-}
-
-.create-btn-native {
-  height: 52px;
-  border: 1px solid #d8d4c9;
-  border-radius: 10px;
-  padding: 0 14px;
-  background: #f4f2ec;
-  color: #111827;
-  font-size: 16px;
+  gap: 8px;
+  padding: 12px 16px;
   font-weight: 600;
+  border-radius: var(--r-md);
+  font-size: 14px;
+  border: 0;
   cursor: pointer;
+  transition: transform .12s ease, box-shadow .15s ease, background .15s;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.btn-primary {
+  background: linear-gradient(135deg, #FF8B6F 0%, #FF6F4E 100%);
+  color: #fff;
+  box-shadow: var(--sh-coral);
+}
+.btn-primary:hover { box-shadow: 0 8px 24px -6px rgba(255, 126, 95, .7); }
+
+.upload-card {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  box-shadow: none;
-  transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
-
-  &:hover {
-    background: #eeece5;
-    border-color: #c9c2b6;
-  }
-
-  &:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-  }
+  gap: 12px;
+  padding: 14px;
+  background: linear-gradient(135deg, #E8F7F0 0%, #DFF1E7 100%);
+  border: 1px solid rgba(92, 200, 166, .25);
+  border-radius: var(--r-md);
+  transition: transform .15s ease, box-shadow .15s ease;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  text-decoration: none;
+}
+.upload-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--sh-2);
+}
+.upload-card.active {
+  background: linear-gradient(135deg, #C9EFE0 0%, #B4E5D0 100%);
+  border-color: rgba(92, 200, 166, .5);
+}
+.upload-card::after {
+  content: "";
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  background: rgba(255,255,255,.4);
+  border-radius: 50%;
+  right: -20px;
+  top: -20px;
+  filter: blur(8px);
 }
 
-.create-icon {
-  font-size: 17px;
+.upload-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 10px -2px rgba(92, 200, 166, .35);
+  flex-shrink: 0;
 }
 
-.dialog-list {
+.upload-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.upload-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: #2A6B53;
+}
+
+.upload-sub {
+  font-size: 11px;
+  color: #4F8D77;
+  margin-top: 2px;
+}
+
+.history {
   flex: 1;
-  min-height: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-1);
+  padding: 8px;
   overflow-y: auto;
-  padding-right: 0;
+  min-height: 0;
+}
+
+.history-section {
+  padding: 10px 10px 4px;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .dialog-group {
-  margin-bottom: 22px;
-}
-
-.dialog-group-title {
-  margin: 0 0 10px 2px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #8a8174;
+  margin-bottom: 8px;
 }
 
 .empty-state {
   padding: 28px 18px;
-  border-radius: 16px;
+  border-radius: var(--r-md);
   background: rgba(255, 255, 255, 0.8);
-  border: 1px dashed #cbd5e1;
+  border: 1px dashed var(--border-strong);
   text-align: center;
-  color: #475569;
+  color: var(--ink-3);
+  margin: 8px;
 }
 
 .empty-icon {
@@ -414,11 +501,12 @@ onMounted(initialize)
 .empty-text {
   font-weight: 600;
   margin-bottom: 6px;
+  color: var(--ink-2);
 }
 
 .empty-hint {
   font-size: 13px;
-  color: #64748b;
+  color: var(--ink-3);
 }
 
 .content {
@@ -427,21 +515,22 @@ onMounted(initialize)
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  padding: 20px;
+}
+
+@media (max-width: 1100px) {
+  .sidebar { width: 240px; }
 }
 
 @media (max-width: 900px) {
   .conversation-main {
     flex-direction: column;
+    gap: 10px;
+    padding: 10px;
   }
 
   .sidebar {
     width: 100%;
-    margin: 0;
-    border-radius: 0;
-    max-height: 280px;
-    border-right: none;
-    border-bottom: 1px solid #dbe3ee;
+    max-height: 320px;
   }
 }
 </style>

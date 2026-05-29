@@ -4,7 +4,7 @@ from loguru import logger
 from types import SimpleNamespace
 from pydantic.v1 import BaseSettings, Field
 
-from AnTang.schemas.common import AntangLightAnalyzerConfig, BootstrapConfig, MultiModels, Tools, Rag, StorageConfig, ServerConfig
+from AnTang.schemas.common import AntangLightAnalyzerConfig, ReminderConfig, BootstrapConfig, MultiModels, Tools, Rag, StorageConfig, ServerConfig
 
 
 class Settings(BaseSettings):
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     storage: Optional[StorageConfig] = None
     multi_models: Optional[MultiModels] = None
     antang_light_analyzer: AntangLightAnalyzerConfig = Field(default_factory=AntangLightAnalyzerConfig)
+    reminder: ReminderConfig = Field(default_factory=ReminderConfig)
 
 
 app_settings = Settings()
@@ -60,6 +61,9 @@ async def init_app_settings(file_path: str = None):
 
             if "antang_light_analyzer" in data:
                 data["antang_light_analyzer"] = AntangLightAnalyzerConfig(**data["antang_light_analyzer"])
+
+            if "reminder" in data:
+                data["reminder"] = ReminderConfig(**data["reminder"])
 
             for key, value in data.items():
                 setattr(app_settings, key, value)

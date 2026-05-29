@@ -83,8 +83,10 @@ async def completion(*, req: CompletionReq, login_user: UserPayload = Depends(ge
     实时对话接口（SSE流式）
     """
 
-    # Agent 初始化
+    # 根据 dialog_id 异步加载 runtime_config
     runtime_config = await DialogService.get_dialog_runtime_config(req.dialog_id)
+
+    # 从 runtime_config 中获取 agent_config，并注入 user_id
     db_config = runtime_config["agent"]
     agent_config = AgentConfig(**db_config)
     agent_config.user_id = login_user.user_id
@@ -102,7 +104,7 @@ async def completion(*, req: CompletionReq, login_user: UserPayload = Depends(ge
     # 获取截止到上次压缩之后的历史消息原文，作为短期记忆
     short_history = await HistoryService.get_short_term_messages(req.dialog_id, login_user.user_id)
 
-    # 获取截止到上次压缩之前的历史消息总结，作为压缩记忆
+    # 获取上次压缩的历史消息摘要，作为压缩记忆
     history_summary = await DialogService.get_dialog_history_summary(req.dialog_id)
 
     # 事件 & 流式响应
@@ -122,6 +124,7 @@ async def completion(*, req: CompletionReq, login_user: UserPayload = Depends(ge
                 file_url=req.file_url,
                 file_name=req.file_name,
                 previous_dialog_state=previous_dialog_state,
+                dialog_id=req.dialog_id,
             ):
                 main_chat_chunk = None
                 if event.get("type") == "response_chunk":

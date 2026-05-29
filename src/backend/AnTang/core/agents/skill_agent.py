@@ -15,11 +15,7 @@ from AnTang.schemas.agent_skill import AgentSkillFolder, AgentSkillFile
 
 class SkillAgent:
 
-    def __init__(
-        self,
-        skill: AgentSkill,
-        user_id: str
-    ):
+    def __init__(self, skill: AgentSkill, user_id: str):
         self.skill = skill
         self.user_id = user_id
         self.skill_folder: Optional[AgentSkillFolder] = None
@@ -62,13 +58,12 @@ class SkillAgent:
             model=self.conversation_model,
             tools=self.tools,
             middleware=self.middlewares,
-            system_prompt=self._build_system_prompt(skill_md)
+            system_prompt=self._build_system_prompt(skill_md),
         )
 
     def setup_language_model(self):
         """设置语言模型"""
         self.conversation_model = ModelManager.get_conversation_model()
-
 
     async def emit_event(self, event):
         writer = get_stream_writer()
@@ -104,32 +99,29 @@ class SkillAgent:
 
         # 递归解析函数
         def parse_item(item_data: dict) -> Union[AgentSkillFile, AgentSkillFolder]:
-            item_type = item_data.get('type', 'file')
+            item_type = item_data.get("type", "file")
 
-            if item_type == 'file':
+            if item_type == "file":
                 # 创建文件对象
                 file_obj = AgentSkillFile(
-                    name=item_data['name'],
-                    path=item_data['path'],
-                    type=item_data['type'],
-                    content=item_data.get('content', '')
+                    name=item_data["name"],
+                    path=item_data["path"],
+                    type=item_data["type"],
+                    content=item_data.get("content", ""),
                 )
                 # 缓存文件对象，方便快速查找
                 self.file_cache[file_obj.path] = file_obj
                 return file_obj
 
-            elif item_type == 'folder':
+            elif item_type == "folder":
                 # 递归处理子文件夹
                 folder_items = []
-                for sub_item in item_data.get('folder', []):
+                for sub_item in item_data.get("folder", []):
                     folder_items.append(parse_item(sub_item))
 
                 # 创建文件夹对象
                 folder_obj = AgentSkillFolder(
-                    name=item_data['name'],
-                    path=item_data['path'],
-                    type=item_data['type'],
-                    folder=folder_items
+                    name=item_data["name"], path=item_data["path"], type=item_data["type"], folder=folder_items
                 )
                 return folder_obj
 
@@ -156,10 +148,7 @@ class SkillAgent:
             文件路径列表
         """
         if pattern:
-            return [
-                path for path in self.file_cache.keys()
-                if pattern in path
-            ]
+            return [path for path in self.file_cache.keys() if pattern in path]
         return list(self.file_cache.keys())
 
     def get_skill_md(self) -> Optional[str]:
@@ -174,19 +163,15 @@ class SkillAgent:
 
         return None
 
-
     async def setup_agent_middlewares(self):
 
         @wrap_tool_call
-        async def add_tool_call_args(
-            request: ToolCallRequest,
-            handler
-        ):
+        async def add_tool_call_args(request: ToolCallRequest, handler):
             await self.emit_event(
                 {
                     "status": "START",
                     "title": f"Skill-Agent - {self.skill.name}执行可用工具: {request.tool_call["name"]}",
-                    "messages": f"正在调用工具 {request.tool_call["name"]}..."
+                    "messages": f"正在调用工具 {request.tool_call["name"]}...",
                 }
             )
 
@@ -196,7 +181,7 @@ class SkillAgent:
                 {
                     "status": "END",
                     "title": f"Skill-Agent - {self.skill.name}执行可用工具: {request.tool_call["name"]}",
-                    "messages": f"{tool_result}"
+                    "messages": f"{tool_result}",
                 }
             )
             return tool_result
@@ -219,9 +204,8 @@ class SkillAgent:
             content = self.get_file_content(file_path)
             if content is None:
                 available_files = self.list_files()
-                return (
-                    f"错误: 文件 '{file_path}' 不存在。\n"
-                    f"可用文件列表:\n" + "\n".join(f"  - {f}" for f in available_files)
+                return f"错误: 文件 '{file_path}' 不存在。\n" f"可用文件列表:\n" + "\n".join(
+                    f"  - {f}" for f in available_files
                 )
             return content
 
@@ -243,19 +227,14 @@ class SkillAgent:
 
         return [get_file_content, list_skill_files]
 
-
     async def ainvoke(self, messages: List[BaseMessage]) -> List[BaseMessage] | str:
         """非流式版本"""
         if not self._initialized:
             await self.init_skill_agent()
 
         result = await self.react_agent.ainvoke(
-            input={"messages": messages},
-            config={"callbacks": [usage_metadata_callback]}
+            input={"messages": messages}, config={"callbacks": [usage_metadata_callback]}
         )
-        filtered_messages = [
-            msg for msg in result["messages"]
-            if not isinstance(msg, (HumanMessage, SystemMessage))
-        ]
+        filtered_messages = [msg for msg in result["messages"] if not isinstance(msg, (HumanMessage, SystemMessage))]
 
         return filtered_messages

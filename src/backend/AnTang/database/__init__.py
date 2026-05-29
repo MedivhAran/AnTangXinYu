@@ -13,13 +13,13 @@ from AnTang.database.models.tool import ToolTable
 from AnTang.database.models.dialog import DialogTable
 from AnTang.database.models.mcp_server import MCPServerTable, MCPServerStdioTable
 from AnTang.database.models.mcp_user_config import MCPUserConfigTable
-from AnTang.database.models.user_role import UserRole
 from AnTang.database.models.llm import LLMTable
 from AnTang.database.models.message import MessageDownTable, MessageLikeTable
-from AnTang.database.models.role import Role
 from AnTang.database.models.usage_stats import UsageStats
 from AnTang.database.models.agent_skill import AgentSkill
 from AnTang.database.models.cgm_report import CGMReportTable
+from AnTang.database.models.reminder import ReminderTable
+from AnTang.database.models.notification import NotificationTable
 from AnTang.settings import app_settings
 
 

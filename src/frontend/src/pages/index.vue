@@ -39,8 +39,11 @@ onMounted(async () => {
 .layout-shell {
   height: 100vh;
   overflow: hidden;
-  background: #f4f2ea;
-  color: #0f172a;
+  background:
+    radial-gradient(circle at 12% 8%, #FFE8D8 0%, transparent 38%),
+    radial-gradient(circle at 90% 92%, #DDF3E8 0%, transparent 42%),
+    var(--bg);
+  color: var(--ink);
 }
 
 .main-shell {

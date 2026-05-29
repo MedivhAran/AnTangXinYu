@@ -12,12 +12,11 @@ def _get_dialog_now() -> datetime:
 class DialogDao:
 
     @classmethod
-    async def create_dialog(cls, name: str, agent_id: str, agent_type: str, user_id: str):
+    async def create_dialog(cls, name: str, agent_type: str, user_id: str):
         """Create a new dialog with named parameters"""
         current_time = _get_dialog_now()
         dialog = DialogTable(
             name=name,
-            agent_id=agent_id,
             agent_type=agent_type,
             user_id=user_id,
             create_time=current_time,
@@ -101,14 +100,6 @@ class DialogDao:
             statement = select(DialogTable).where(DialogTable.dialog_id == dialog_id)
             result = await session.exec(statement)
             return result.first()
-
-    @classmethod
-    async def delete_from_agent_id(cls, agent_id: str):
-        """Delete all dialogs associated with an agent_id"""
-        async with async_session_getter() as session:
-            statement = delete(DialogTable).where(DialogTable.agent_id == agent_id)
-            await session.exec(statement)
-            await session.commit()
 
     @classmethod
     async def update_dialog_summary(cls, dialog_id, summary, summary_last_time):

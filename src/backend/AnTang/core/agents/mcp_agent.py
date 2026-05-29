@@ -60,15 +60,12 @@ class MCPAgent:
     async def setup_agent_middlewares(self):
 
         @wrap_tool_call
-        async def add_tool_call_args(
-            request: ToolCallRequest,
-            handler
-        ):
+        async def add_tool_call_args(request: ToolCallRequest, handler):
             await self.emit_event(
                 {
                     "status": "START",
                     "title": f"Sub-Agent - {self.mcp_config.server_name}执行可用工具: {request.tool_call["name"]}",
-                    "messages": f"正在调用工具 {request.tool_call["name"]}..."
+                    "messages": f"正在调用工具 {request.tool_call["name"]}...",
                 }
             )
 
@@ -83,7 +80,7 @@ class MCPAgent:
                 {
                     "status": "END",
                     "title": f"Sub-Agent - {self.mcp_config.server_name}执行可用工具: {request.tool_call["name"]}",
-                    "messages": f"{tool_result}"
+                    "messages": f"{tool_result}",
                 }
             )
             return tool_result
@@ -95,9 +92,8 @@ class MCPAgent:
             model=self.conversation_model,
             tools=self.mcp_tools,
             middleware=self.middlewares,
-            system_prompt=CALL_END_PROMPT
+            system_prompt=CALL_END_PROMPT,
         )
-
 
     async def ainvoke(self, messages: List[BaseMessage]) -> List[BaseMessage] | str:
         """非流式版本"""

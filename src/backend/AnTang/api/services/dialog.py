@@ -7,23 +7,17 @@ from AnTang.database.dao.dialog import DialogDao
 from AnTang.database.dao.history import HistoryDao
 from AnTang.database.models.user import AdminUser
 from AnTang.prompts.completion import GENERATE_CHAT_SUMMARY
-from AnTang.services.antang.policies import ANTANG_AGENT_NAME, ANTANG_AGENT_TYPE
+from AnTang.services.antang.policies import ANTANG_AGENT_TYPE
 
 
 class DialogService:
 
     @classmethod
-    async def create_dialog(cls, name: str, agent_id: str, agent_type: str | None, user_id: str):
-        """Create a new dialog"""
+    async def create_dialog(cls, name: str, user_id: str):
+        """Create a new dialog bound to the system 安糖心语 agent"""
         try:
-            agent = await AgentService.select_agent_by_id(agent_id)
-            if not agent:
-                raise ValueError("未找到目标智能体")
-            if agent.get("name") != ANTANG_AGENT_NAME:
-                raise ValueError("当前项目仅支持创建安糖心语会话")
-
             dialog = await DialogDao.create_dialog(
-                name=name, agent_id=agent_id, agent_type=ANTANG_AGENT_TYPE, user_id=user_id
+                name=name, agent_type=ANTANG_AGENT_TYPE, user_id=user_id
             )
             return dialog.to_dict()
         except Exception as err:
@@ -64,11 +58,9 @@ class DialogService:
             if not dialog:
                 raise ValueError("对话不存在")
 
-            agent = await AgentService.select_agent_by_id(dialog.agent_id)
+            agent = await AgentService.get_antang_agent()
             if not agent:
-                raise ValueError("对话绑定的智能体不存在")
-            if agent.get("name") != ANTANG_AGENT_NAME:
-                raise ValueError("当前项目仅支持安糖心语会话")
+                raise ValueError("安糖心语智能体不存在")
 
             return {
                 "dialog": dialog.to_dict(),

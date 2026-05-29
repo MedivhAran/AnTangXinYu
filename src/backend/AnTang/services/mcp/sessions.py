@@ -172,9 +172,7 @@ class WebsocketConnection(TypedDict):
     """Additional keyword arguments to pass to the ClientSession"""
 
 
-Connection = (
-    StdioConnection | SSEConnection | StreamableHttpConnection | WebsocketConnection
-)
+Connection = StdioConnection | SSEConnection | StreamableHttpConnection | WebsocketConnection
 
 
 @asynccontextmanager
@@ -185,9 +183,7 @@ async def _create_stdio_session(  # noqa: PLR0913
     env: dict[str, str] | None = None,
     cwd: str | Path | None = None,
     encoding: str = DEFAULT_ENCODING,
-    encoding_error_handler: Literal[
-        "strict", "ignore", "replace"
-    ] = DEFAULT_ENCODING_ERROR_HANDLER,
+    encoding_error_handler: Literal["strict", "ignore", "replace"] = DEFAULT_ENCODING_ERROR_HANDLER,
     session_kwargs: dict[str, Any] | None = None,
 ) -> AsyncIterator[ClientSession]:
     """Create a new session to an MCP server using stdio.
@@ -258,6 +254,7 @@ async def _create_sse_session(  # noqa: PLR0913
     if httpx_client_factory is not None:
         kwargs["httpx_client_factory"] = httpx_client_factory
 
+    # 向 url 发起SSE长连接，建好之后返回一对 read/write 流对象，分别用于读写数据。然后用这个流对象创建 ClientSession，yield 给调用方使用。
     async with (
         sse_client(url, headers, timeout, sse_read_timeout, auth=auth, **kwargs) as (
             read,
@@ -405,8 +402,5 @@ async def create_session(connection: Connection) -> AsyncIterator[ClientSession]
         async with _create_websocket_session(**params) as session:
             yield session
     else:
-        msg = (
-            f"Unsupported transport: {transport}. "
-            f"Must be one of: 'stdio', 'sse', 'websocket', 'streamable_http'"
-        )
+        msg = f"Unsupported transport: {transport}. " f"Must be one of: 'stdio', 'sse', 'websocket', 'streamable_http'"
         raise ValueError(msg)

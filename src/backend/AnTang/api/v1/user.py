@@ -38,10 +38,10 @@ async def register(user_name: str = Body(description='用户名'),
         admin = UserDao.get_user(AdminUser)
 
         if admin:
-            UserDao.add_user_and_default_role(user_name, user_email, user_password, user_avatar)
+            UserDao.add_user(user_name, user_email, user_password, user_avatar)
         else:
             user_id = AdminUser
-            UserDao.add_user_and_admin_role(user_id, user_name, user_email, user_password, user_avatar)
+            UserDao.add_admin_user(user_id, user_name, user_email, user_password, user_avatar)
     except Exception as e:
         logger.error(f'register user is appear error: {e}')
         raise HTTPException(status_code=500, detail=f'register user is appear error: {e}')
@@ -65,7 +65,7 @@ async def login(user_name: str = Body(description='用户名'),
     if db_user.delete:
         raise HTTPException(status_code=500, detail='该账号已被禁用，请联系管理员')
 
-    access_token, refresh_token, role = get_user_jwt(db_user)
+    access_token, refresh_token = get_user_jwt(db_user)
 
     # Set the JWT cookies in the response
     Authorize.set_access_cookies(access_token)

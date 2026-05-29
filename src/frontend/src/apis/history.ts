@@ -9,7 +9,6 @@ export function createDialogAPI(data: DialogCreateType) {
     method: 'POST',
     data: {
       name: data.name,
-      agent_id: data.agent_id,
       agent_type: data.agent_type
     }
   })
