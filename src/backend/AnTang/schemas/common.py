@@ -105,3 +105,11 @@ class AntangLightAnalyzerConfig(BaseModel):
     max_output_tokens: int = 220
     max_short_history_messages: int = 6
     show_internal_trace: bool = False
+
+
+class ReminderConfig(BaseModel):
+    """心跳提醒系统的行为开关。生成提醒文案所用模型沿用 multi_models.light_analyzer。"""
+    enabled: bool = True
+    check_interval_seconds: int = 30
+    generate_timeout_ms: int = 10000
+    max_output_tokens: int = 200

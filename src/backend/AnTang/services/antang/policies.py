@@ -9,7 +9,6 @@
 
 from AnTang.services.antang.state import GlucoseContext
 
-
 ANTANG_AGENT_NAME = "安糖心语"
 ANTANG_AGENT_TYPE = "AnTangAgent"
 

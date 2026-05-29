@@ -54,9 +54,9 @@ class UserDao:
             return session.exec(statement).first()
 
     @classmethod
-    def add_user_and_default_role(cls, user_name: str, user_email: str, user_password: str, user_avatar: str):
+    def add_user(cls, user_name: str, user_email: str, user_password: str, user_avatar: str):
         """
-        新增用户，并添加默认角色
+        新增用户
         用户的ID以此递增
         """
         user_number = len(cls.get_user_number()) + 1
@@ -66,10 +66,10 @@ class UserDao:
             session.commit()
 
     @classmethod
-    def add_user_and_admin_role(cls, user_id: str, user_name: str,
-                                user_email: str, user_password: str, user_avatar: str):
+    def add_admin_user(cls, user_id: str, user_name: str,
+                       user_email: str, user_password: str, user_avatar: str):
         """
-        新增用户，并添加超级管理员角色
+        新增超级管理员用户
         """
         with session_getter() as session:
             session.add(UserTable(user_email=user_email, user_id=user_id, user_avatar=user_avatar,

@@ -1138,12 +1138,10 @@ details: AnTangSafetyAssessment
 
 核心数据按职责分组(模型定义在 `database/models/`,DAO 在 `database/dao/`):
 
-**用户与权限**:
+**用户**:
 
 ```text
 user                  用户主表
-role                  角色定义
-user_role             用户-角色关联
 ```
 
 **对话与 Agent**:

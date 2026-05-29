@@ -5,7 +5,8 @@ from langchain.agents.structured_output import ToolStrategy
 from AnTang.core.callbacks import usage_metadata_callback
 from AnTang.core.models.manager import ModelManager
 
-# 只需要创建一个对象，就会自动返回符合结构化格式的回复结果，调用方直接使用即可，无需再进行解析。
+
+# 只需要创建一个对象，调用get_structured_response自动返回符合结构化格式的回复结果，调用方直接使用即可，无需再进行解析。
 class StructuredResponseAgent:
     def __init__(self, response_format):
         self.response_format = response_format
@@ -13,13 +14,11 @@ class StructuredResponseAgent:
 
     def _create_structured_agent(self):
         return create_agent(
-            model=ModelManager.get_conversation_model(),
-            response_format=ToolStrategy(self.response_format)
+            model=ModelManager.get_conversation_model(), response_format=ToolStrategy(self.response_format)
         )
 
     def get_structured_response(self, messages):
         result = self.structured_agent.invoke(
-            input={"messages": messages},
-            config={"callbacks": [usage_metadata_callback]}
+            input={"messages": messages}, config={"callbacks": [usage_metadata_callback]}
         )
         return result["structured_response"]

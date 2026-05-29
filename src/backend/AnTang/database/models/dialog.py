@@ -15,7 +15,6 @@ class DialogTable(SQLModelSerializable, table=True):
 
     dialog_id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
     name: str = Field(description="对话绑定的Agent的名称")
-    agent_id: str = Field(description="对话Dialog绑定Agent的ID")
     agent_type: str = Field(default=ANTANG_AGENT_TYPE, description="当前项目固定绑定安糖心语 Agent")
     user_id: str = Field(description="对话Dialog的用户ID")
 

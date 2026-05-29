@@ -25,7 +25,6 @@ class DialogListContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_dialog_list_preserves_dialog_fields_and_exposes_agent_metadata(self):
         dialog_a = {
             "dialog_id": "dialog-a",
-            "agent_id": "agent-antang",
             "agent_type": ANTANG_AGENT_TYPE,
             "name": "早餐记录",
             "create_time": "2026-04-20T10:00:00+08:00",
@@ -33,7 +32,6 @@ class DialogListContractTests(unittest.IsolatedAsyncioTestCase):
         }
         dialog_b = {
             "dialog_id": "dialog-b",
-            "agent_id": "agent-antang",
             "agent_type": ANTANG_AGENT_TYPE,
             "name": "午餐复盘",
             "create_time": "2026-04-20T11:00:00+08:00",
@@ -41,13 +39,12 @@ class DialogListContractTests(unittest.IsolatedAsyncioTestCase):
         }
         other_dialog = {
             "dialog_id": "dialog-c",
-            "agent_id": "agent-other",
             "agent_type": "Agent",
             "name": "普通会话",
             "create_time": "2026-04-20T12:00:00+08:00",
             "update_time": "2026-04-20T12:01:00+08:00",
         }
-        shared_agent = {
+        antang_agent = {
             "id": "agent-antang",
             "name": "安糖心语",
             "logo_url": "https://example.com/antang.png",
@@ -61,16 +58,16 @@ class DialogListContractTests(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value=[dialog_a, dialog_b, other_dialog]),
         ), patch.object(
             dialog_api.AgentService,
-            "select_agent_by_id",
-            AsyncMock(return_value=shared_agent),
-        ) as select_agent_mock:
+            "get_antang_agent",
+            AsyncMock(return_value=antang_agent),
+        ) as antang_agent_mock:
             response = await dialog_api.get_dialog(
                 login_user=SimpleNamespace(user_id="user-1")
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 2)
-        self.assertEqual(select_agent_mock.await_count, 1)
+        self.assertEqual(antang_agent_mock.await_count, 1)
 
         first, second = response.data
         self.assertEqual(first["name"], "早餐记录")

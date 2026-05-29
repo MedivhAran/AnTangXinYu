@@ -103,12 +103,42 @@ async def _bootstrap_antang_knowledge(app: FastAPI) -> None:
     asyncio.get_running_loop().call_soon(_schedule_sync_task)
 
 
+async def _bootstrap_reminder_heartbeat(app: FastAPI) -> None:
+    """启动心跳提醒循环。
+
+    - 先把上次异常退出残留的 firing 状态复位为 pending（崩溃恢复）。
+    - 与知识库后台同步一样，用 call_soon 把循环的 create_task 延后到 startup
+      返回事件循环之后，避免拖慢容器 healthcheck。
+    """
+    if not app_settings.reminder.enabled:
+        logger.info("[reminder] 已禁用，跳过心跳循环")
+        return
+
+    from AnTang.database.dao.reminder import ReminderDao
+    from AnTang.services.antang.reminder import reminder_heartbeat_loop
+
+    try:
+        recovered = await ReminderDao.reset_stale_firing()
+        if recovered:
+            logger.info(f"[reminder] 启动复位 {recovered} 条残留 firing 提醒")
+    except Exception as err:
+        logger.warning(f"[reminder] 启动复位 firing 失败: {err}")
+
+    app.state.reminder_heartbeat_task = None
+
+    def _schedule_heartbeat() -> None:
+        app.state.reminder_heartbeat_task = asyncio.create_task(reminder_heartbeat_loop())
+
+    asyncio.get_running_loop().call_soon(_schedule_heartbeat)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_config()
 
     await register_router(app)
     await _bootstrap_antang_knowledge(app)
+    await _bootstrap_reminder_heartbeat(app)
     print_logo()
 
     yield
@@ -116,6 +146,10 @@ async def lifespan(app: FastAPI):
     sync_task = getattr(app.state, "antang_kb_sync_task", None)
     if sync_task:
         logger.info(f"[antang-kb] shutdown 时后台同步任务完成状态: {sync_task.done()}")
+
+    heartbeat_task = getattr(app.state, "reminder_heartbeat_task", None)
+    if heartbeat_task:
+        heartbeat_task.cancel()
 
 
 def create_app():

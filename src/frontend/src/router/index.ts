@@ -5,11 +5,10 @@ import NotFound from '../pages/notFound/index';
 import Index from '../pages/index.vue'
 import conversation from '../pages/conversation/conversation.vue';
 import DefaultPage from '../pages/conversation/defaultPage/defaultPage.vue';
+import UploadPage from '../pages/conversation/uploadPage/uploadPage.vue';
 import Configuration from '../pages/configuration'
 import Login from '../pages/login'
 import { Register } from '../pages/login'
-import Agent from '../pages/agent'
-import AgentEditor from '../pages/agent/agent-editor.vue'
 import Tool from '../pages/tool'
 import Model from '../pages/model'
 import ModelEditor from '../pages/model/model-editor.vue'
@@ -62,6 +61,11 @@ const routes: RouteRecordRaw[] = [
             path: '/conversation/chatPage',
             name: 'chatPage',
             component: ChatPage,
+          },
+          {
+            path: '/conversation/upload',
+            name: 'upload',
+            component: UploadPage,
           }
         ]
       },
@@ -72,22 +76,6 @@ const routes: RouteRecordRaw[] = [
           current: 'configuration'
         },
         component: Configuration,
-      },
-      {
-        path: '/agent',
-        name: 'agent',
-        meta: {
-          current: 'agent'
-        },
-        component: Agent,
-      },
-      {
-        path: '/agent/editor',
-        name: 'agent-editor',
-        meta: {
-          current: 'agent'
-        },
-        component: AgentEditor,
       },
       {
         path: '/tool',

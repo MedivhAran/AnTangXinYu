@@ -53,7 +53,7 @@ class StreamAgentState(AgentState):
 class AgentConfig(BaseModel):
     """Agent 运行配置。
 
-    这些字段通常来自数据库里的 Agent 配置表，
+    这些字段来自数据库里的 Agent 配置表，
     completion 接口会把查询到的配置转成这个模型后交给 GeneralAgent。
     """
 
@@ -364,7 +364,7 @@ class GeneralAgent:
                 config={"callbacks": [usage_metadata_callback]},
                 stream_mode=["messages", "custom"],
             ):
-                if token == "custom":  # 代表langchain工具事件
+                if token == "custom":  # 代表langgraph节点内部通过 get_stream_writer() 主动写入的事件
                     # 累计清零，让下一阶段的 accumulated 重新从 0 开始。
                     # 注意：之前已经流给前端的 chunk 不再回收，多数对话不触发工具，影响很小。
                     accumulated = ""

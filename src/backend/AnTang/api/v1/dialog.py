@@ -5,7 +5,7 @@ from AnTang.api.services.dialog import DialogService
 from AnTang.api.services.user import UserPayload, get_login_user
 from AnTang.schemas.dialog import DialogCreateRequest, DialogRenameRequest
 from AnTang.api.responses.builder import resp_200, resp_500, UnifiedResponseModel
-from AnTang.services.antang.policies import ANTANG_AGENT_NAME, ANTANG_AGENT_TYPE
+from AnTang.services.antang.policies import ANTANG_AGENT_TYPE
 
 router = APIRouter(tags=["Dialog"])
 
@@ -16,28 +16,19 @@ async def get_dialog(
 ):
     try:
         messages = await DialogService.get_list_dialog(user_id=login_user.user_id)
-        results = []
-        agent_cache = {}
+        agent = await AgentService.get_antang_agent() or {}
 
-        for message in messages:
-            agent_id = message.get("agent_id")
-            if agent_id not in agent_cache:
-                agent_cache[agent_id] = await AgentService.select_agent_by_id(
-                    agent_id=agent_id
-                ) or {}
-
-            message_agent = agent_cache[agent_id]
-            if message_agent.get("name") != ANTANG_AGENT_NAME:
-                continue
-
-            dialog_payload = {
+        results = [
+            {
                 **message,
                 "agent_type": ANTANG_AGENT_TYPE,
-                "agent_name": message_agent.get("name", ""),
-                "agent_logo_url": message_agent.get("logo_url", ""),
+                "agent_name": agent.get("name", ""),
+                "agent_logo_url": agent.get("logo_url", ""),
                 "last_active_time": message.get("update_time"),
             }
-            results.append(dialog_payload)
+            for message in messages
+            if message.get("agent_type") == ANTANG_AGENT_TYPE
+        ]
 
         return resp_200(data=results)
     except Exception as err:
@@ -53,8 +44,6 @@ async def create_dialog(
     try:
         dialog = await DialogService.create_dialog(
             name=dialog_req.name,
-            agent_id=dialog_req.agent_id,
-            agent_type=dialog_req.agent_type,
             user_id=login_user.user_id
         )
         return resp_200(dialog)

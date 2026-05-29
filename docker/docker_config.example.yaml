@@ -303,3 +303,16 @@ antang_light_analyzer:
   max_output_tokens: 220
   max_short_history_messages: 6
   show_internal_trace: false
+
+
+# ============== [可选] 心跳提醒系统 ==============
+# 用户可让 AI 设置定时提醒，到点后心跳循环主动生成一条提醒消息落进对应会话，
+# 前端轮询未读并红点 + toast 提醒。生成文案所用模型沿用 multi_models.light_analyzer。
+#   enabled=false 时完全关闭：不起心跳循环，create_reminder 等工具仍可写库但不会触发。
+#   check_interval_seconds 是心跳粒度（到点最大延迟），30s 对吃药/测血糖类提醒足够。
+#   generate_timeout_ms 是单次生成超时，超时/失败回退为静态文案，不会漏发提醒。
+reminder:
+  enabled: true
+  check_interval_seconds: 30
+  generate_timeout_ms: 10000
+  max_output_tokens: 200

@@ -19,6 +19,8 @@ from loguru import logger
 
 from AnTang.core.agents.general_agent import AgentConfig, GeneralAgent
 from AnTang.database.dao.cgm_report import CGMReportDao
+from AnTang.database.dao.reminder import ReminderDao
+from AnTang.database.models.reminder import ReminderTable
 from AnTang.schemas.antang_analyzer import DialogState, LightAnalyzerResult
 from AnTang.services.antang.capabilities import AnTangCapabilityService
 from AnTang.services.antang.cgm_report import (
@@ -74,6 +76,8 @@ class AnTangAgent(GeneralAgent):
         self.current_file_url: str | None = None
         self.current_file_name: str | None = None
         self.current_vision_analysis: AnTangVisionAnalysis | None = None
+        # 本轮会话 ID，供 create_reminder 工具知道提醒落进哪个会话。
+        self.current_dialog_id: str | None = None
         # light_analyzer 对本轮上下文的理解，finalize_turn 把它作为 update_profile 的判断依据。
         self.last_analyzer_understanding: str = ""
 
@@ -288,6 +292,93 @@ class AnTangAgent(GeneralAgent):
                 return "用户尚未上传过 CGM 报告。"
             return json.dumps(cgm_report_to_dict(report, slim=True), ensure_ascii=False)
 
+        _RECURRENCE_DESC = {"once": "仅一次", "hourly": "每小时", "daily": "每天", "weekly": "每周"}
+
+        @tool(parse_docstring=True)
+        async def create_reminder(
+            fire_time: str,
+            content: str,
+            recurrence: str = "once",
+            repeat_count: int | None = None,
+        ) -> str:
+            """创建一个定时提醒，到点后我会主动给用户发消息提醒。
+
+            当用户要求"提醒我做某事""到点叫我""每天/每周定时提醒"等时使用。设置前先调用
+            get_current_beijing_time 获取当前时间，把"明天早上8点""半小时后"这类相对时间
+            换算成绝对时间再传入。
+
+            Args:
+                fire_time: 首次触发的绝对北京时间，格式严格为 'YYYY-MM-DD HH:MM:SS'。
+                content: 提醒事项内容，简洁描述要提醒用户做什么，如"测空腹血糖"。
+                recurrence: 重复方式，可选 once(仅一次)/hourly(每小时)/daily(每天)/weekly(每周)，默认 once。
+                repeat_count: 重复次数上限，仅对重复提醒有效；不填表示一直重复。
+
+            Returns:
+                str: 创建结果说明（含触发时间）；失败时返回失败原因。
+            """
+            if not self.current_dialog_id:
+                return "无法创建提醒：当前会话上下文缺失。"
+            recurrence = (recurrence or "once").lower()
+            if recurrence not in _RECURRENCE_DESC:
+                return f"不支持的重复方式：{recurrence}。只支持 once/hourly/daily/weekly。"
+            try:
+                fire_dt = datetime.strptime(fire_time.strip(), "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return "时间格式不对，请用 'YYYY-MM-DD HH:MM:SS' 这种绝对北京时间。"
+            now = datetime.now(pytz.timezone("Asia/Shanghai")).replace(tzinfo=None)
+            if fire_dt <= now:
+                return "提醒时间必须晚于当前时间，请重新确认时间。"
+
+            reminder = ReminderTable(
+                user_id=self.agent_config.user_id,
+                dialog_id=self.current_dialog_id,
+                content=content.strip(),
+                recurrence=recurrence,
+                repeat_count=repeat_count,
+                next_fire_at=fire_dt,
+            )
+            await ReminderDao.create(reminder)
+            return (
+                f"已设置提醒：{content}（{_RECURRENCE_DESC[recurrence]}，下次 {fire_time}）。"
+                f"到点我会主动提醒你。"
+            )
+
+        @tool(parse_docstring=True)
+        async def list_reminders() -> str:
+            """查看当前用户已设置、尚未结束的定时提醒列表。
+
+            当用户问"我有哪些提醒""我设了什么闹钟""帮我看看待办提醒"等时使用。
+
+            Returns:
+                str: 提醒列表（含编号、内容、下次触发时间、重复方式）；没有则提示。
+            """
+            reminders = await ReminderDao.list_active_by_user(self.agent_config.user_id)
+            if not reminders:
+                return "你当前没有设置任何提醒。"
+            lines = [
+                f"[{r.id}] {r.content}"
+                f"（{_RECURRENCE_DESC.get(r.recurrence, r.recurrence)}，"
+                f"下次 {r.next_fire_at.strftime('%Y-%m-%d %H:%M:%S')}）"
+                for r in reminders
+            ]
+            return "你当前的提醒：\n" + "\n".join(lines)
+
+        @tool(parse_docstring=True)
+        async def cancel_reminder(reminder_id: str) -> str:
+            """取消一条已设置的定时提醒。
+
+            当用户要求"取消提醒""别再提醒我了""删掉那个闹钟"时使用。通常先用
+            list_reminders 拿到提醒编号，再调用本工具。
+
+            Args:
+                reminder_id: 要取消的提醒编号（来自 list_reminders）。
+
+            Returns:
+                str: 取消结果说明。
+            """
+            ok = await ReminderDao.cancel(reminder_id.strip(), self.agent_config.user_id)
+            return "已取消该提醒。" if ok else "没找到这条提醒，或它已经结束/取消了。"
+
         tools = [
             get_current_beijing_time,
             analyze_uploaded_image,
@@ -299,6 +390,9 @@ class AnTangAgent(GeneralAgent):
             text_to_image,
             import_cgm_report,
             get_latest_cgm_report,
+            create_reminder,
+            list_reminders,
+            cancel_reminder,
         ]
 
         # 这份映射用于 GeneralAgent 的工具事件展示，把函数名翻译成前端更友好的名称。
@@ -314,6 +408,9 @@ class AnTangAgent(GeneralAgent):
                 "text_to_image": {"name": "图片生成", "type": "安糖能力"},
                 "import_cgm_report": {"name": "导入 CGM 报告", "type": "安糖能力"},
                 "get_latest_cgm_report": {"name": "查看最近 CGM 报告", "type": "安糖能力"},
+                "create_reminder": {"name": "设置提醒", "type": "安糖能力"},
+                "list_reminders": {"name": "查看提醒", "type": "安糖能力"},
+                "cancel_reminder": {"name": "取消提醒", "type": "安糖能力"},
             }
         )
         return tools
@@ -341,6 +438,7 @@ class AnTangAgent(GeneralAgent):
         file_url: str | None = None,
         file_name: str | None = None,
         previous_dialog_state: DialogState | None = None,
+        dialog_id: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """安糖每轮对话的流式入口。"""
 
@@ -348,6 +446,7 @@ class AnTangAgent(GeneralAgent):
         self.current_file_url = file_url
         self.current_file_name = file_name
         self.current_vision_analysis = None
+        self.current_dialog_id = dialog_id
 
         glucose_zone = classify_glucose_zone(glucose_context)
 

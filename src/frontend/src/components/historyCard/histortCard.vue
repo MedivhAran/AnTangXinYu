@@ -9,6 +9,7 @@ const emits = defineEmits<{
 
 const props = defineProps<{
     item:HistoryListType
+    unread?: boolean
 }>();
 
 // 格式化时间显示
@@ -59,12 +60,13 @@ const selectCard = () => {
     <div class="card-main">
       <div class="content">
         <div class="title" :title="props.item.name">
-          {{ props.item.name || '未命名会话' }}
+          <span v-if="props.unread" class="unread-dot" title="有新的主动提醒"></span>{{ props.item.name || '未命名会话' }}
         </div>
         <div class="subtitle" :class="{ danger: riskHint }">
-          <span v-if="riskHint" class="risk-dot"></span>
-          <span>{{ riskHint || formattedTime }}</span>
-          <span v-if="riskHint"> · {{ formattedTime }}</span>
+          <span v-if="riskHint" class="risk-pill">
+            <span class="risk-dot"></span>{{ riskHint }}
+          </span>
+          <span>{{ formattedTime }}</span>
         </div>
       </div>
 
@@ -83,15 +85,14 @@ const selectCard = () => {
   position: relative;
   background-color: transparent;
   border: 1px solid transparent;
-  border-radius: 9px;
-  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
-  margin-bottom: 6px;
+  transition: background 0.12s ease;
+  margin-bottom: 2px;
 
   &:hover {
-    background: #f0eee7;
-    border-color: #e4dfd3;
+    background: rgba(74, 47, 25, .04);
   }
 
   .card-main {
@@ -104,38 +105,65 @@ const selectCard = () => {
   .content {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 
     .title {
-      font-size: 16px;
-      font-weight: 700;
-      color: #151515;
-      margin-bottom: 8px;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--ink);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .unread-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--coral-deep, #FF6F4E);
+      margin-right: 6px;
+      vertical-align: middle;
+      flex-shrink: 0;
     }
 
     .subtitle {
       display: flex;
       align-items: center;
-      gap: 4px;
-      font-size: 13px;
-      color: #8a8174;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--ink-3);
+      font-family: var(--font-num);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
 
-      &.danger {
-        color: #d56b35;
+      &.danger .risk-pill {
+        background: var(--risk-bg);
+        color: var(--risk-text);
       }
     }
 
+    .risk-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 8px;
+      border-radius: var(--r-pill);
+      font-size: 10.5px;
+      font-weight: 600;
+      line-height: 1.6;
+      background: var(--risk-bg);
+      color: var(--risk-text);
+    }
+
     .risk-dot {
-      width: 8px;
-      height: 8px;
+      width: 5px;
+      height: 5px;
       border-radius: 999px;
-      background: #d56b35;
-      flex-shrink: 0;
+      background: currentColor;
     }
   }
 
@@ -144,7 +172,7 @@ const selectCard = () => {
     transition: opacity 0.2s ease;
 
     .delete-icon {
-      color: #9b9488;
+      color: var(--ink-4);
       font-size: 18px;
       font-weight: bold;
       cursor: pointer;
@@ -156,7 +184,7 @@ const selectCard = () => {
       transition: color 0.2s;
 
       &:hover {
-        color: #b4532b;
+        color: var(--coral-deep);
       }
     }
   }
@@ -166,27 +194,21 @@ const selectCard = () => {
   }
 }
 
-// 激活状态
+// 激活状态：奶油 → 浅珊瑚的渐变
 .history-card.active {
-  border-color: transparent;
-  background-color: #e3f1e9;
+  background: linear-gradient(90deg, #FFEDE5 0%, #FFF6EF 100%);
 
   .content .title {
-    color: #0f6b49;
+    color: var(--coral-deep);
+    font-weight: 600;
   }
 }
 
-// 响应式设计
 @media (max-width: 480px) {
   .history-card {
     .content {
-      .title {
-        font-size: 14px;
-      }
-
-      .subtitle {
-        font-size: 12px;
-      }
+      .title { font-size: 13px; }
+      .subtitle { font-size: 11px; }
     }
   }
 }
