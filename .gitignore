@@ -40,11 +40,11 @@ docker/docker_config.yaml
 src/backend/AnTang/config.yaml
 
 # ---- 运行时数据（容器/进程产生，不应入库）----
-data/
+
 docker/data/
 chroma_db/
 memory_db/
 vector_db/
-CGM/
+
 
 # 
