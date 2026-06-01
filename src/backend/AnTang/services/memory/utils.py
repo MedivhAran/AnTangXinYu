@@ -5,10 +5,12 @@ from AnTang.services.memory.prompts import FACT_RETRIEVAL_PROMPT
 
 
 def get_fact_retrieval_messages(message):
+    """组装给事实检索Ai的提示词"""
     return FACT_RETRIEVAL_PROMPT, f"Input:\n{message}"
 
 
 def parse_messages(messages):
+    """把消息列表拼成“角色: 内容”的纯文本，喂给事实抽取 LLM。"""
     response = ""
     for msg in messages:
         if msg["role"] == "system":
@@ -21,6 +23,7 @@ def parse_messages(messages):
 
 
 def format_entities(entities):
+    """把图谱实体三元组渲染成“源 -- 关系 -- 目标”的文本（图谱模式下用）。"""
     if not entities:
         return ""
 
@@ -34,12 +37,12 @@ def format_entities(entities):
 
 def remove_code_blocks(content: str) -> str:
     """
-    Removes enclosing code block markers ```[language] and ``` from a given string.
+    去掉字符串首尾包裹的代码块标记 ```[语言] 和 ```。
 
-    Remarks:
-    - The function uses a regex pattern to match code blocks that may start with ``` followed by an optional language tag (letters or numbers) and end with ```.
-    - If a code block is detected, it returns only the inner content, stripping out the markers.
-    - If no code block markers are found, the original content is returned as-is.
+    说明：
+    - 用正则匹配以 ``` 开头（可带一个由字母或数字组成的语言标签）、以 ``` 结尾的代码块。
+    - 命中代码块时，只返回内部内容，剥掉首尾标记。
+    - 没有代码块标记时，原样返回。
     """
     pattern = r"^```[a-zA-Z0-9]*\n([\s\S]*?)\n```$"
     match = re.match(pattern, content.strip())
@@ -48,21 +51,21 @@ def remove_code_blocks(content: str) -> str:
 
 def extract_json(text):
     """
-    Extracts JSON content from a string, removing enclosing triple backticks and optional 'json' tag if present.
-    If no code block is found, returns the text as-is.
+    从字符串中提取 JSON 内容，去掉首尾的三反引号以及可能存在的 'json' 标签。
+    若没有代码块，则原样返回文本。
     """
     text = text.strip()
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
     if match:
         json_str = match.group(1)
     else:
-        json_str = text  # assume it's raw JSON
+        json_str = text  # 视作裸 JSON
     return json_str
 
 
 def get_image_description(image_obj, llm, vision_details):
     """
-    Get the description of the image
+    获取图片的描述（调用视觉模型）。
     """
 
     if isinstance(image_obj, str):
@@ -87,7 +90,7 @@ def get_image_description(image_obj, llm, vision_details):
 
 def parse_vision_messages(messages, llm=None, vision_details="auto"):
     """
-    Parse the vision messages from the messages
+    从消息列表中解析出视觉（图片）消息，把图片替换成它的文字描述。
     """
     returned_messages = []
     for msg in messages:
@@ -95,13 +98,13 @@ def parse_vision_messages(messages, llm=None, vision_details="auto"):
             returned_messages.append(msg)
             continue
 
-        # Handle message content
+        # 处理消息内容
         if isinstance(msg["content"], list):
-            # Multiple image URLs in content
+            # content 里包含多张图片
             description = get_image_description(msg, llm, vision_details)
             returned_messages.append({"role": msg["role"], "content": description})
         elif isinstance(msg["content"], dict) and msg["content"].get("type") == "image_url":
-            # Single image content
+            # 单张图片内容
             image_url = msg["content"]["image_url"]["url"]
             try:
                 description = get_image_description(image_url, llm, vision_details)
@@ -109,7 +112,7 @@ def parse_vision_messages(messages, llm=None, vision_details="auto"):
             except Exception:
                 raise Exception(f"Error while downloading {image_url}.")
         else:
-            # Regular text content
+            # 普通文本内容
             returned_messages.append(msg)
 
     return returned_messages
@@ -117,7 +120,7 @@ def parse_vision_messages(messages, llm=None, vision_details="auto"):
 
 def process_telemetry_filters(filters):
     """
-    Process the telemetry filters
+    处理遥测用的过滤条件（把各类 id 做 md5 脱敏）。
     """
     if filters is None:
         return {}
@@ -134,7 +137,7 @@ def process_telemetry_filters(filters):
 
 
 def sanitize_relationship_for_cypher(relationship) -> str:
-    """Sanitize relationship text for Cypher queries by replacing problematic characters."""
+    """清洗关系文本中的特殊字符，使其可安全用于 Cypher 查询。"""
     char_map = {
         "...": "_ellipsis_",
         "…": "_ellipsis_",
@@ -176,7 +179,7 @@ def sanitize_relationship_for_cypher(relationship) -> str:
         ">": "_rangle_",
     }
 
-    # Apply replacements and clean up
+    # 执行替换并清理
     sanitized = relationship
     for old, new in char_map.items():
         sanitized = sanitized.replace(old, new)

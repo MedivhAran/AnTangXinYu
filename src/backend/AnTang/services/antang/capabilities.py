@@ -11,6 +11,7 @@ from langchain_core.language_models import BaseChatModel
 
 from AnTang.core.models.manager import ModelManager
 from AnTang.services.antang.knowledge import get_default_knowledge_id
+from AnTang.services.antang.policies import glucose_zone_to_risk_level
 from AnTang.services.antang.state import AnTangVisionAnalysis, GlucoseContext
 from AnTang.services.rag.handler import RagHandler
 from AnTang.tools.get_weather.action import get_weather
@@ -94,33 +95,20 @@ class AnTangCapabilityService:
     """
 
     @classmethod
-    async def resolve_knowledge_ids(cls, *, user_id: str, explicit_ids: list[str] | None) -> list[str]:
-        """返回安糖内置默认知识库。
+    async def retrieve_knowledge(cls, *, query: str) -> str | None:
+        """检索安糖内置默认知识库（全体用户共用，不按用户隔离）。
 
-        user_id / explicit_ids 暂时保留在签名中，方便未来扩展，但当前产品不再允许用户
-        给安糖注入自己的知识库，避免领域检索被无关资料污染。
+        命中则返回可拼入回复的文本；未命中、或没有默认知识库时返回 None。
         """
         default_id = await get_default_knowledge_id()
-        return [default_id] if default_id else []
-
-    @classmethod
-    async def retrieve_knowledge(
-        cls,
-        *,
-        query: str,
-        user_id: str,
-        explicit_ids: list[str] | None,
-    ) -> tuple[str | None, list[str]]:
-        """执行糖尿病相关知识检索，并返回命中的文本和实际使用的知识库 ID。"""
-        knowledge_ids = await cls.resolve_knowledge_ids(user_id=user_id, explicit_ids=explicit_ids)
-        if not knowledge_ids:
-            return None, []
+        if not default_id:
+            return None
 
         # RagHandler 屏蔽 ES/Milvus/rerank 细节，调用方只关心最终可拼入回复的文本。
-        knowledge_message = await RagHandler.retrieve_ranked_documents(query, knowledge_ids)
+        knowledge_message = await RagHandler.retrieve_ranked_documents(query, [default_id])
         if not knowledge_message or knowledge_message == "No relevant documents found.":
-            return None, knowledge_ids
-        return knowledge_message, knowledge_ids
+            return None
+        return knowledge_message
 
     @classmethod
     async def web_search(cls, query: str) -> str | None:
@@ -177,16 +165,19 @@ class AnTangCapabilityService:
         user_input: str,
         glucose_context: GlucoseContext | None,
         vision_analysis: AnTangVisionAnalysis | None,
-        risk_level: str,
         glucose_zone: str,
         focus: str,
     ) -> str:
-        """根据当前血糖、图片和风险分层生成饮食建议依据。"""
+        """根据当前血糖、图片和风险分层生成饮食建议依据。
+
+        风险等级直接由 glucose_zone 派生（severe_low→urgent，low/low_warning→caution，其余 normal），
+        不再由调用方传入。
+        """
         tool_model = model or ModelManager.get_conversation_model()
         prompt = DIET_ADVICE_PROMPT.format(
             user_input=user_input,
             glucose_context=_render_glucose_context(glucose_context),
-            risk_level=risk_level,
+            risk_level=glucose_zone_to_risk_level(glucose_zone),
             glucose_zone=glucose_zone,
             vision_summary=vision_analysis.summary if vision_analysis else "无",
             focus=focus or "当前饮食是否适合作为补糖或维持血糖的选择",
@@ -201,16 +192,18 @@ class AnTangCapabilityService:
         model: BaseChatModel | None,
         user_input: str,
         glucose_context: GlucoseContext | None,
-        risk_level: str,
         glucose_zone: str,
         focus: str,
     ) -> str:
-        """根据当前血糖和风险分层生成运动建议依据。"""
+        """根据当前血糖和风险分层生成运动建议依据。
+
+        风险等级直接由 glucose_zone 派生，不再由调用方传入。
+        """
         tool_model = model or ModelManager.get_conversation_model()
         prompt = EXERCISE_ADVICE_PROMPT.format(
             user_input=user_input,
             glucose_context=_render_glucose_context(glucose_context),
-            risk_level=risk_level,
+            risk_level=glucose_zone_to_risk_level(glucose_zone),
             glucose_zone=glucose_zone,
             focus=focus or "当前是否适合运动，以及运动前后需要注意什么",
         )

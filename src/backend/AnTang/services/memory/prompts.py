@@ -1,3 +1,12 @@
+"""安糖记忆模块用到的 LLM prompt 模板集合。
+
+- MEMORY_ANSWER_PROMPT：基于已存记忆回答用户问题。
+- FACT_RETRIEVAL_PROMPT：从对话中抽取用户事实/偏好，返回 {"facts": [...]}。
+- DEFAULT_UPDATE_MEMORY_PROMPT：对比新事实与旧记忆，逐条给出 ADD/UPDATE/DELETE/NONE。
+- PROCEDURAL_MEMORY_SYSTEM_PROMPT：把一段 agent 执行历史总结成程序记忆。
+
+注意：下面这些字符串是直接发给模型的功能性 prompt，请勿翻译或改写正文。
+"""
 from datetime import datetime
 
 MEMORY_ANSWER_PROMPT = """
@@ -289,6 +298,7 @@ You are a memory summarization system that records and preserves the complete in
 
 
 def get_update_memory_messages(retrieved_old_memory_dict, response_content, custom_update_memory_prompt=None):
+    """拼出“记忆合并”用的完整 prompt：把旧记忆与新事实填入模板，要求 LLM 返回带 event 的 JSON。"""
     if custom_update_memory_prompt is None:
         global DEFAULT_UPDATE_MEMORY_PROMPT
         custom_update_memory_prompt = DEFAULT_UPDATE_MEMORY_PROMPT

@@ -2,57 +2,59 @@ from abc import ABC, abstractmethod
 
 
 class VectorStoreBase(ABC):
+    """向量库的抽象基类，约定集合管理与向量增删改查接口。"""
+
     @abstractmethod
     def create_col(self, name, vector_size, distance):
-        """Create a new collection."""
+        """创建一个新集合。"""
         pass
 
     @abstractmethod
     def insert(self, vectors, payloads=None, ids=None):
-        """Insert vectors into a collection."""
+        """向集合插入向量。"""
         pass
 
     @abstractmethod
     def search(self, query, vectors, limit=5, filters=None):
-        """Search for similar vectors."""
+        """检索相似向量。"""
         pass
 
     @abstractmethod
     def delete(self, vector_id):
-        """Delete a vector by ID."""
+        """按 ID 删除一个向量。"""
         pass
 
     @abstractmethod
     def update(self, vector_id, vector=None, payload=None):
-        """Update a vector and its payload."""
+        """更新一个向量及其 payload。"""
         pass
 
     @abstractmethod
     def get(self, vector_id):
-        """Retrieve a vector by ID."""
+        """按 ID 读取一个向量。"""
         pass
 
     @abstractmethod
     def list_cols(self):
-        """List all collections."""
+        """列出全部集合。"""
         pass
 
     @abstractmethod
     def delete_col(self):
-        """Delete a collection."""
+        """删除集合。"""
         pass
 
     @abstractmethod
     def col_info(self):
-        """Get information about a collection."""
+        """获取集合的信息。"""
         pass
 
     @abstractmethod
     def list(self, filters=None, limit=None):
-        """List all memories."""
+        """列出全部记忆。"""
         pass
 
     @abstractmethod
     def reset(self):
-        """Reset by delete the collection and recreate it."""
+        """通过删除并重建集合来重置。"""
         pass

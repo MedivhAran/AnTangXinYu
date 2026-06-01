@@ -25,7 +25,7 @@ class Reranker:
             },
             "parameters": {
                 "return_documents": True,
-                "top_n": app_settings.rag.retrival.get('top_k') * 2
+                "top_n": max(app_settings.rag.retrival.get('top_k', 5) * 2, len(documents))
             }
         }
 

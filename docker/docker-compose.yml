@@ -46,6 +46,34 @@ services:
       timeout: 10s
       retries: 3
 
+  # Elasticsearch 关键词检索服务（带 IK 中文分词插件）
+  elasticsearch:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.elasticsearch
+      args:
+        ES_VERSION: "8.19.0"   # 与后端 elasticsearch 客户端(8.19.0)对齐
+    container_name: agentchat-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false          # 关闭认证：仅 compose 内网可达，切勿对外映射 9200
+      - node.store.allow_mmap=false           # 绕开宿主机 vm.max_map_count 内核要求，省去 sysctl 调整
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"      # JVM 堆，按服务器内存调整
+      - TZ=Asia/Shanghai
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - agentchat-network
+    expose:
+      - "9200"                                 # 只在内部网络暴露，不映射到宿主机
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1" ]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
   # 后端API服务
   backend:
     build:
@@ -61,6 +89,7 @@ services:
       - ../data/antang_knowledge_pdfs:/app/data/antang_knowledge_pdfs:ro
       - ../data/vector_db:/app/vector_db
       - ../data/memory_db:/app/memory_db
+
     #    volumes:
     #      - ../src/backend:/app:cached
     #      - ../data:/app/data
@@ -71,6 +100,8 @@ services:
       redis:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      elasticsearch:
         condition: service_healthy
     networks:
       - agentchat-network
@@ -137,4 +168,6 @@ volumes:
   mysql_data:
     driver: local
   redis_data:
+    driver: local
+  es_data:
     driver: local

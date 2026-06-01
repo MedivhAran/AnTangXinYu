@@ -143,11 +143,7 @@ class AnTangAgent(GeneralAgent):
             Returns:
                 str: 检索到的知识内容；如果没有命中则返回未命中的说明。
             """
-            knowledge_support, _ = await AnTangCapabilityService.retrieve_knowledge(
-                query=query,
-                user_id=self.agent_config.user_id,
-                explicit_ids=None,
-            )
+            knowledge_support = await AnTangCapabilityService.retrieve_knowledge(query=query)
             return knowledge_support or "没有命中直接相关的糖尿病知识资料。"
 
         @tool(parse_docstring=True)
@@ -203,7 +199,6 @@ class AnTangAgent(GeneralAgent):
                 user_input=query,
                 glucose_context=self.current_glucose_context,
                 vision_analysis=vision_analysis,
-                risk_level="normal",
                 glucose_zone=classify_glucose_zone(self.current_glucose_context),
                 focus=query,
             )
@@ -225,7 +220,6 @@ class AnTangAgent(GeneralAgent):
                 model=self.conversation_model,
                 user_input=query,
                 glucose_context=self.current_glucose_context,
-                risk_level="normal",
                 glucose_zone=classify_glucose_zone(self.current_glucose_context),
                 focus=query,
             )
@@ -339,8 +333,7 @@ class AnTangAgent(GeneralAgent):
             )
             await ReminderDao.create(reminder)
             return (
-                f"已设置提醒：{content}（{_RECURRENCE_DESC[recurrence]}，下次 {fire_time}）。"
-                f"到点我会主动提醒你。"
+                f"已设置提醒：{content}（{_RECURRENCE_DESC[recurrence]}，下次 {fire_time}）。" f"到点我会主动提醒你。"
             )
 
         @tool(parse_docstring=True)

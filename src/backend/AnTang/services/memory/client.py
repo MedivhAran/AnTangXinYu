@@ -34,59 +34,54 @@ class MemoryType(Enum):
     三种记忆类型
     """
 
-    SEMANTIC = "semantic_memory"  # 用户事实和偏好
-    EPISODIC = "episodic_memory"  # 具体对话片段
-    PROCEDURAL = "procedural_memory"  # Agent执行过程的步骤摘要
+    SEMANTIC = "semantic_memory"  # 语义记忆（用户事实和偏好）
+    EPISODIC = "episodic_memory"  # 情节记忆（具体对话片段）
+    PROCEDURAL = "procedural_memory"  # 程序记忆（存的是怎么做某件事的操作流程。）
 
 
 def _build_filters_and_metadata(
-    *,  # Enforce keyword-only arguments
+    *,  # 强制后面的参数只能按关键字传
     user_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     run_id: Optional[str] = None,
-    actor_id: Optional[str] = None,  # For query-time filtering
+    actor_id: Optional[str] = None,  # 仅用于查询时过滤
     input_metadata: Optional[Dict[str, Any]] = None,
     input_filters: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """
-    Constructs metadata for storage and filters for querying based on session and actor identifiers.
+    """根据会话标识和 actor 标识，构造“存储用的元数据”和“查询用的过滤条件”。
 
-    This helper supports multiple session identifiers (`user_id`, `agent_id`, and/or `run_id`)
-    for flexible session scoping and optionally narrows queries to a specific `actor_id`. It returns two dicts:
+    这个辅助函数支持多个会话标识（`user_id`、`agent_id`、`run_id`）来灵活划定会话范围，
+    并可选地把查询收窄到某个 `actor_id`。返回两个字典：
 
-    1. `base_metadata_template`: Used as a template for metadata when storing new memories.
-       It includes all provided session identifier(s) and any `input_metadata`.
-    2. `effective_query_filters`: Used for querying existing memories. It includes all
-       provided session identifier(s), any `input_filters`, and a resolved actor
-       identifier for targeted filtering if specified by any actor-related inputs.
+    1. `base_metadata_template`：存新记忆时作为元数据模板，
+       包含所有传入的会话标识以及 `input_metadata`。
+    2. `effective_query_filters`：查询已有记忆时使用，包含所有传入的会话标识、
+       `input_filters`，以及（若指定了 actor 相关输入）解析出的 actor 标识用于定向过滤。
 
-    Actor filtering precedence: explicit `actor_id` arg → `filters["actor_id"]`
-    This resolved actor ID is used for querying but is not added to `base_metadata_template`,
-    as the actor for storage is typically derived from message content at a later stage.
+    actor 过滤优先级：显式的 `actor_id` 参数 → `filters["actor_id"]`。
+    解析出的 actor ID 只用于查询，不会写进 `base_metadata_template`，
+    因为存储用的 actor 通常在后续阶段从消息内容里推导。
 
     Args:
-        user_id (Optional[str]): User identifier, for session scoping.
-        agent_id (Optional[str]): Agent identifier, for session scoping.
-        run_id (Optional[str]): Run identifier, for session scoping.
-        actor_id (Optional[str]): Explicit actor identifier, used as a potential source for
-            actor-specific filtering. See actor resolution precedence in the main description.
-        input_metadata (Optional[Dict[str, Any]]): Base dictionary to be augmented with
-            session identifiers for the storage metadata template. Defaults to an empty dict.
-        input_filters (Optional[Dict[str, Any]]): Base dictionary to be augmented with
-            session and actor identifiers for query filters. Defaults to an empty dict.
+        user_id (Optional[str]): 用户标识，用于划定会话范围。
+        agent_id (Optional[str]): Agent 标识，用于划定会话范围。
+        run_id (Optional[str]): Run 标识，用于划定会话范围。
+        actor_id (Optional[str]): 显式 actor 标识，可作为 actor 过滤的来源，优先级见上文。
+        input_metadata (Optional[Dict[str, Any]]): 存储元数据模板的基础字典，
+            会被补充上会话标识。默认空字典。
+        input_filters (Optional[Dict[str, Any]]): 查询过滤条件的基础字典，
+            会被补充上会话标识与 actor 标识。默认空字典。
 
     Returns:
-        tuple[Dict[str, Any], Dict[str, Any]]: A tuple containing:
-            - base_metadata_template (Dict[str, Any]): Metadata template for storing memories,
-              scoped to the provided session(s).
-            - effective_query_filters (Dict[str, Any]): Filters for querying memories,
-              scoped to the provided session(s) and potentially a resolved actor.
+        tuple[Dict[str, Any], Dict[str, Any]]: 包含两项的元组：
+            - base_metadata_template (Dict[str, Any]): 存记忆用的元数据模板，限定在给定会话范围内。
+            - effective_query_filters (Dict[str, Any]): 查记忆用的过滤条件，限定在给定会话（及可能的 actor）范围内。
     """
 
     base_metadata_template = deepcopy(input_metadata) if input_metadata else {}
     effective_query_filters = deepcopy(input_filters) if input_filters else {}
 
-    # ---------- add all provided session ids ----------
+    # ---------- 加入所有传入的会话 id ----------
     session_ids_provided = []
 
     if user_id:
@@ -107,7 +102,7 @@ def _build_filters_and_metadata(
     if not session_ids_provided:
         raise ValueError("At least one of 'user_id', 'agent_id', or 'run_id' must be provided.")
 
-    # ---------- optional actor filter ----------
+    # ---------- 可选的 actor 过滤 ----------
     resolved_actor_id = actor_id or effective_query_filters.get("actor_id")
     if resolved_actor_id:
         effective_query_filters["actor_id"] = resolved_actor_id
@@ -143,22 +138,21 @@ class AsyncMemory(MemoryBase):
         prompt: Optional[str] = None,
         llm=None,
     ):
-        """
-        Create a new memory asynchronously.
+        """异步创建一条新记忆。
 
         Args:
-            messages (str or List[Dict[str, str]]): Messages to store in the memory.
-            user_id (str, optional): ID of the user creating the memory.
-            agent_id (str, optional): ID of the agent creating the memory. Defaults to None.
-            run_id (str, optional): ID of the run creating the memory. Defaults to None.
-            metadata (dict, optional): Metadata to store with the memory. Defaults to None.
-            infer (bool, optional): Whether to infer the memories. Defaults to True.
-            memory_type (str, optional): Type of memory to create. Defaults to None.
-                                         Pass "procedural_memory" to create procedural memories.
-            prompt (str, optional): Prompt to use for the memory creation. Defaults to None.
-            llm (BaseChatModel, optional): LLM class to use for generating procedural memories. Defaults to None. Useful when user is using LangChain ChatModel.
+            messages (str or List[Dict[str, str]]): 要存入记忆的消息。
+            user_id (str, optional): 创建记忆的用户 ID。
+            agent_id (str, optional): 创建记忆的 agent ID。默认 None。
+            run_id (str, optional): 创建记忆的 run ID。默认 None。
+            metadata (dict, optional): 随记忆一起存储的元数据。默认 None。
+            infer (bool, optional): 是否对消息做事实推断。默认 True。
+            memory_type (str, optional): 要创建的记忆类型。默认 None。
+                                         传 "procedural_memory" 可创建程序记忆。
+            prompt (str, optional): 创建记忆时使用的 prompt。默认 None。
+            llm (BaseChatModel, optional): 生成程序记忆时使用的 LLM。默认 None。在使用 LangChain ChatModel 时有用。
         Returns:
-            dict: A dictionary containing the result of the memory addition operation.
+            dict: 包含本次记忆写入结果的字典。
         """
         processed_metadata, effective_filters = _build_filters_and_metadata(
             user_id=user_id, agent_id=agent_id, run_id=run_id, input_metadata=metadata
@@ -208,9 +202,13 @@ class AsyncMemory(MemoryBase):
         effective_filters: dict,
         infer: bool,
     ):
+        """记忆写入核心：infer=False 时原样入库；infer=True 时先用 LLM 抽事实，
+        再检索相似的旧记忆，交给 LLM 决策 ADD/UPDATE/DELETE/NONE 后落库。"""
+        # ── 分支 A：infer=False，不抽事实，每条消息原样存成一条记忆 ──
         if not infer:
             returned_memories = []
             for message_dict in messages:
+                # 跳过格式不合法的消息（不是 dict，或缺 role / content）
                 if (
                     not isinstance(message_dict, dict)
                     or message_dict.get("role") is None
@@ -219,9 +217,11 @@ class AsyncMemory(MemoryBase):
                     logger.warning(f"Skipping invalid message format (async): {message_dict}")
                     continue
 
+                # system 消息不写入记忆
                 if message_dict["role"] == "system":
                     continue
 
+                # 每条记忆带上自己的 role；actor_id（说话人）取自消息的 name 字段
                 per_msg_meta = deepcopy(metadata)
                 per_msg_meta["role"] = message_dict["role"]
 
@@ -229,6 +229,7 @@ class AsyncMemory(MemoryBase):
                 if actor_name:
                     per_msg_meta["actor_id"] = actor_name
 
+                # 消息内容向量化后直接落库（一条消息 = 一条记忆）
                 msg_content = message_dict["content"]
                 msg_embeddings = await asyncio.to_thread(self.embedding_model.embed, msg_content)
                 mem_id = await self._create_memory(msg_content, msg_embeddings, per_msg_meta)
@@ -244,15 +245,19 @@ class AsyncMemory(MemoryBase):
                 )
             return returned_memories
 
+        # ── 分支 B：infer=True，把对话浓缩成“事实”，再和旧记忆智能合并 ──
+        # 步骤 1：把消息拼成纯文本，第一次调 LLM，抽取本轮的原子事实列表（如“喜欢芝士披萨”）
         parsed_messages = parse_messages(messages)
         system_prompt, user_prompt = get_fact_retrieval_messages(parsed_messages)
 
+        # 这批新事实后面会和旧记忆一起交给第二个 LLM，逐条判定新增/更新/删除/不动
         response = await asyncio.to_thread(
             self.llm.invoke,
             input=[SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
             config=None,
             response_format={"type": "json_object"},
         )
+        # 解析 LLM 返回的 {"facts": [...]}；解析失败就按“没抽到事实”处理
         try:
             response = remove_code_blocks(response.content)
             new_retrieved_facts = json.loads(response)["facts"]
@@ -263,38 +268,52 @@ class AsyncMemory(MemoryBase):
         if not new_retrieved_facts:
             logger.debug("No new facts retrieved from input. Skipping memory update LLM call.")
 
+        # 步骤 2：为每条新事实，在向量库里检索出最相似的旧记忆，作为候选合并对象
         retrieved_old_memory = []
-        new_message_embeddings = {}
+        new_message_embeddings = {}  # 顺手缓存每条事实的向量，落库时复用，省一次 embed
 
         async def process_fact_for_search(new_mem_content):
+            # 把一条事实向量化，并且在同一作用域下检索最相似的 5 条旧记忆
             embeddings = await asyncio.to_thread(self.embedding_model.embed, new_mem_content)
+            # 缓存一下新事实的向量
             new_message_embeddings[new_mem_content] = embeddings
+            # 检索旧记忆，选出最相似的五条
             existing_mems = await asyncio.to_thread(
                 self.vector_store.search,
                 query=new_mem_content,
                 vectors=embeddings,
                 limit=5,
-                filters=effective_filters,  # 'filters' is query_filters_for_inference
+                filters=effective_filters,  # 这里的 filters 即推断阶段用的查询过滤条件
             )
+
             return [{"id": mem.id, "text": mem.payload["data"]} for mem in existing_mems]
 
+        # 所有事实并发检索，再把结果汇总到一起
         search_tasks = [process_fact_for_search(fact) for fact in new_retrieved_facts]
         search_results_list = await asyncio.gather(*search_tasks)
+
         for result_group in search_results_list:
             retrieved_old_memory.extend(result_group)
 
+        # 不同事实可能召回同一条旧记忆，按真实 id 去重
         unique_data = {}
         for item in retrieved_old_memory:
             unique_data[item["id"]] = item
+
         retrieved_old_memory = list(unique_data.values())
+
         logger.info(f"Total existing memories: {len(retrieved_old_memory)}")
+        # 关键技巧：把真实 uuid 临时替换成简单序号 "0"/"1"/"2"… 再喂给 LLM，
+        # 防止 LLM 抄错或编造长 uuid；temp_uuid_mapping 负责事后把序号还原成真实 id
         temp_uuid_mapping = {}
         for idx, item in enumerate(retrieved_old_memory):
             temp_uuid_mapping[str(idx)] = item["id"]
             retrieved_old_memory[idx]["id"] = str(idx)
 
+        # 步骤 3：第二次调 LLM——把[旧记忆 + 新事实]交给它，逐条决定增/改/删/不动
         if new_retrieved_facts:
             function_calling_prompt = get_update_memory_messages(retrieved_old_memory, new_retrieved_facts)
+
             try:
                 response = await asyncio.to_thread(
                     self.llm.invoke,
@@ -305,6 +324,7 @@ class AsyncMemory(MemoryBase):
             except Exception as e:
                 logger.error(f"Error in new memory actions response: {e}")
                 response = ""
+            # 解析 LLM 给出的操作清单 {"memory": [{id, text, event}, ...]}
             try:
                 response = remove_code_blocks(response.content)
                 new_memories_with_actions = json.loads(response)
@@ -312,8 +332,9 @@ class AsyncMemory(MemoryBase):
                 logger.error(f"Invalid JSON response: {e}")
                 new_memories_with_actions = {}
         else:
-            new_memories_with_actions = {}
+            new_memories_with_actions = {}  # 没抽到事实，无需改动记忆
 
+        # 步骤 4：按 LLM 的操作清单并发落库（先把任务都建好，后面统一 await）
         returned_memories = []
         try:
             memory_tasks = []
@@ -326,6 +347,7 @@ class AsyncMemory(MemoryBase):
                     event_type = resp.get("event")
 
                     if event_type == "ADD":
+                        # 新事实 → 新增一条记忆
                         task = asyncio.create_task(
                             self._create_memory(
                                 data=action_text,
@@ -335,6 +357,7 @@ class AsyncMemory(MemoryBase):
                         )
                         memory_tasks.append((task, resp, "ADD", None))
                     elif event_type == "UPDATE":
+                        # 改写旧记忆 → 先用序号映射回真实 uuid，再更新
                         task = asyncio.create_task(
                             self._update_memory(
                                 memory_id=temp_uuid_mapping[resp["id"]],
@@ -345,13 +368,16 @@ class AsyncMemory(MemoryBase):
                         )
                         memory_tasks.append((task, resp, "UPDATE", temp_uuid_mapping[resp["id"]]))
                     elif event_type == "DELETE":
+                        # 旧记忆作废 → 同样映射回真实 uuid 后删除
                         task = asyncio.create_task(self._delete_memory(memory_id=temp_uuid_mapping[resp.get("id")]))
                         memory_tasks.append((task, resp, "DELETE", temp_uuid_mapping[resp.get("id")]))
                     elif event_type == "NONE":
+                        # 已有相同信息，不做任何改动
                         logger.info("NOOP for Memory (async).")
                 except Exception as e:
                     logger.error(f"Error processing memory action (async): {resp}, Error: {e}")
 
+            # 等所有增删改任务执行完，整理成统一的返回结构
             for task, resp, event_type, mem_id in memory_tasks:
                 try:
                     result_id = await task
@@ -387,14 +413,13 @@ class AsyncMemory(MemoryBase):
         return added_entities
 
     async def get(self, memory_id):
-        """
-        Retrieve a memory by ID asynchronously.
+        """异步按 ID 读取一条记忆。
 
         Args:
-            memory_id (str): ID of the memory to retrieve.
+            memory_id (str): 要读取的记忆 ID。
 
         Returns:
-            dict: Retrieved memory.
+            dict: 读取到的记忆。
         """
         memory = await asyncio.to_thread(self.vector_store.get, vector_id=memory_id)
         if not memory:
@@ -437,23 +462,20 @@ class AsyncMemory(MemoryBase):
         filters: Optional[Dict[str, Any]] = None,
         limit: int = 100,
     ):
-        """
-        List all memories.
+        """列出全部记忆。
 
-         Args:
-             user_id (str, optional): user id
-             agent_id (str, optional): agent id
-             run_id (str, optional): run id
-             filters (dict, optional): Additional custom key-value filters to apply to the search.
-                 These are merged with the ID-based scoping filters. For example,
-                 `filters={"actor_id": "some_user"}`.
-             limit (int, optional): The maximum number of memories to return. Defaults to 100.
+        Args:
+            user_id (str, optional): 用户 id
+            agent_id (str, optional): agent id
+            run_id (str, optional): run id
+            filters (dict, optional): 额外的自定义键值过滤条件，会与基于 ID 的会话过滤合并。
+                例如 `filters={"actor_id": "some_user"}`。
+            limit (int, optional): 返回记忆的最大数量。默认 100。
 
-         Returns:
-             dict: A dictionary containing a list of memories under the "results" key,
-                   and potentially "relations" if graph store is enabled. For API v1.0,
-                   it might return a direct list (see deprecation warning).
-                   Example for v1.1+: `{"results": [{"id": "...", "memory": "...", ...}]}`
+        Returns:
+            dict: 在 "results" 键下包含一组记忆的字典；若启用图谱存储还会带 "relations"。
+                  v1.0 接口可能直接返回列表（见弃用提示）。
+                  v1.1+ 示例：`{"results": [{"id": "...", "memory": "...", ...}]}`
         """
 
         _, effective_filters = _build_filters_and_metadata(
@@ -536,22 +558,21 @@ class AsyncMemory(MemoryBase):
         filters: Optional[Dict[str, Any]] = None,
         threshold: Optional[float] = None,
     ):
-        """
-        Searches for memories based on a query
+        """根据查询检索记忆。
+
         Args:
-            query (str): Query to search for.
-            user_id (str, optional): ID of the user to search for. Defaults to None.
-            agent_id (str, optional): ID of the agent to search for. Defaults to None.
-            run_id (str, optional): ID of the run to search for. Defaults to None.
-            limit (int, optional): Limit the number of results. Defaults to 100.
-            filters (dict, optional): Filters to apply to the search. Defaults to None.
-            threshold (float, optional): Maximum acceptable distance (lower = stricter). Defaults to None.
+            query (str): 要检索的查询文本。
+            user_id (str, optional): 要检索的用户 ID。默认 None。
+            agent_id (str, optional): 要检索的 agent ID。默认 None。
+            run_id (str, optional): 要检索的 run ID。默认 None。
+            limit (int, optional): 限制返回结果数量。默认 100。
+            filters (dict, optional): 检索时应用的过滤条件。默认 None。
+            threshold (float, optional): 可接受的最大距离（越小越严格）。默认 None。
                 ChromaDB 默认 L2 距离，越小越相似；为 None 时不过滤。
 
         Returns:
-            dict: A dictionary containing the search results, typically under a "results" key,
-                  and potentially "relations" if graph store is enabled.
-                  Example for v1.1+: `{"results": [{"id": "...", "memory": "...", "score": 0.8, ...}]}`
+            dict: 包含检索结果的字典，一般在 "results" 键下；若启用图谱存储还会带 "relations"。
+                  v1.1+ 示例：`{"results": [{"id": "...", "memory": "...", "score": 0.8, ...}]}`
         """
 
         _, effective_filters = _build_filters_and_metadata(
@@ -582,6 +603,7 @@ class AsyncMemory(MemoryBase):
         return {"results": original_memories}
 
     async def _search_vector_store(self, query, filters, limit, threshold: Optional[float] = None):
+        """把查询向量化后在 Chroma 里检索，整形成 MemoryItem，并按 threshold（距离上限）过滤。"""
         embeddings = await asyncio.to_thread(self.embedding_model.embed, query)
         memories = await asyncio.to_thread(
             self.vector_store.search, query=query, vectors=embeddings, limit=limit, filters=filters
@@ -623,15 +645,14 @@ class AsyncMemory(MemoryBase):
         return original_memories
 
     async def update(self, memory_id, data):
-        """
-        Update a memory by ID asynchronously.
+        """异步按 ID 更新一条记忆。
 
         Args:
-            memory_id (str): ID of the memory to update.
-            data (str): New content to update the memory with.
+            memory_id (str): 要更新的记忆 ID。
+            data (str): 用于覆盖的新内容。
 
         Returns:
-            dict: Success message indicating the memory was updated.
+            dict: 表示更新成功的提示信息。
 
         Example:
             await m.update(memory_id="mem_123", data="Likes to play tennis on weekends")
@@ -645,23 +666,21 @@ class AsyncMemory(MemoryBase):
         return {"message": "Memory updated successfully!"}
 
     async def delete(self, memory_id):
-        """
-        Delete a memory by ID asynchronously.
+        """异步按 ID 删除一条记忆。
 
         Args:
-            memory_id (str): ID of the memory to delete.
+            memory_id (str): 要删除的记忆 ID。
         """
         await self._delete_memory(memory_id)
         return {"message": "Memory deleted successfully!"}
 
     async def delete_all(self, user_id=None, agent_id=None, run_id=None):
-        """
-        Delete all memories asynchronously.
+        """异步删除符合条件的全部记忆。
 
         Args:
-            user_id (str, optional): ID of the user to delete memories for. Defaults to None.
-            agent_id (str, optional): ID of the agent to delete memories for. Defaults to None.
-            run_id (str, optional): ID of the run to delete memories for. Defaults to None.
+            user_id (str, optional): 要删除其记忆的用户 ID。默认 None。
+            agent_id (str, optional): 要删除其记忆的 agent ID。默认 None。
+            run_id (str, optional): 要删除其记忆的 run ID。默认 None。
         """
         filters = {}
         if user_id:
@@ -692,18 +711,18 @@ class AsyncMemory(MemoryBase):
         return {"message": "Memories deleted successfully!"}
 
     async def history(self, memory_id):
-        """
-        Get the history of changes for a memory by ID asynchronously.
+        """异步获取某条记忆的变更历史。
 
         Args:
-            memory_id (str): ID of the memory to get history for.
+            memory_id (str): 要查询历史的记忆 ID。
 
         Returns:
-            list: List of changes for the memory.
+            list: 该记忆的变更记录列表。
         """
         return await asyncio.to_thread(self.db.get_history, memory_id)
 
     async def _create_memory(self, data, existing_embeddings, metadata=None):
+        """新增一条记忆：写入向量库，同时往 MySQL 历史表记一条 ADD。"""
         logger.debug(f"Creating memory with {data=}")
         if data in existing_embeddings:
             embeddings = existing_embeddings[data]
@@ -739,14 +758,13 @@ class AsyncMemory(MemoryBase):
         return memory_id
 
     async def _create_procedural_memory(self, messages, metadata=None, llm=None, prompt=None):
-        """
-        Create a procedural memory asynchronously
+        """异步创建一条程序记忆。
 
         Args:
-            messages (list): List of messages to create a procedural memory from.
-            metadata (dict): Metadata to create a procedural memory from.
-            llm (llm, optional): LLM to use for the procedural memory creation. Defaults to None.
-            prompt (str, optional): Prompt to use for the procedural memory creation. Defaults to None.
+            messages (list): 用于生成程序记忆的消息列表。
+            metadata (dict): 用于生成程序记忆的元数据。
+            llm (llm, optional): 生成程序记忆使用的 LLM。默认 None。
+            prompt (str, optional): 生成程序记忆使用的 prompt。默认 None。
         """
         try:
             from langchain_core.messages.utils import (
@@ -789,6 +807,7 @@ class AsyncMemory(MemoryBase):
         return result
 
     async def _update_memory(self, memory_id, data, existing_embeddings, metadata=None):
+        """更新一条记忆：覆盖向量库里的向量与 payload，同时往历史表记一条 UPDATE。"""
         logger.info(f"Updating memory with {data=}")
 
         try:
@@ -846,6 +865,7 @@ class AsyncMemory(MemoryBase):
         return memory_id
 
     async def _delete_memory(self, memory_id):
+        """删除一条记忆：从向量库移除，同时往历史表记一条 DELETE（is_deleted=True）。"""
         logger.info(f"Deleting memory with {memory_id=}")
         existing_memory = await asyncio.to_thread(self.vector_store.get, vector_id=memory_id)
         prev_value = existing_memory.payload["data"]
