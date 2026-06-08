@@ -23,6 +23,7 @@ from AnTang.database.dao.reminder import ReminderDao
 from AnTang.database.models.reminder import ReminderTable
 from AnTang.schemas.antang_analyzer import DialogState, LightAnalyzerResult
 from AnTang.services.antang.capabilities import AnTangCapabilityService
+from AnTang.services.antang.food import lookup_food
 from AnTang.services.antang.cgm_report import (
     CGMReportService,
     cgm_report_to_dict,
@@ -372,6 +373,21 @@ class AnTangAgent(GeneralAgent):
             ok = await ReminderDao.cancel(reminder_id.strip(), self.agent_config.user_id)
             return "已取消该提醒。" if ok else "没找到这条提醒，或它已经结束/取消了。"
 
+        @tool(parse_docstring=True)
+        async def lookup_food_nutrition(food_name: str) -> str:
+            """查询食物的营养成分（能量/碳水/蛋白质/脂肪/膳食纤维）和升糖指数(GI)。
+
+            当用户问某种食物能不能吃、热量或碳水有多少、升糖快不快、怎么搭配饮食时使用，
+            例如"米饭碳水多少""绿豆能吃吗""西瓜升糖高不高"。数据出自《中国食物成分表》。
+
+            Args:
+                food_name: 食物名称，如"米饭""绿豆""西瓜""土豆"。
+
+            Returns:
+                str: 匹配到的食物每 100g 营养成分与 GI；未命中时给出提示。
+            """
+            return lookup_food(food_name)
+
         tools = [
             get_current_beijing_time,
             analyze_uploaded_image,
@@ -386,6 +402,7 @@ class AnTangAgent(GeneralAgent):
             create_reminder,
             list_reminders,
             cancel_reminder,
+            lookup_food_nutrition,
         ]
 
         # 这份映射用于 GeneralAgent 的工具事件展示，把函数名翻译成前端更友好的名称。
@@ -404,6 +421,7 @@ class AnTangAgent(GeneralAgent):
                 "create_reminder": {"name": "设置提醒", "type": "安糖能力"},
                 "list_reminders": {"name": "查看提醒", "type": "安糖能力"},
                 "cancel_reminder": {"name": "取消提醒", "type": "安糖能力"},
+                "lookup_food_nutrition": {"name": "食物营养查询", "type": "安糖能力"},
             }
         )
         return tools
@@ -443,7 +461,7 @@ class AnTangAgent(GeneralAgent):
 
         glucose_zone = classify_glucose_zone(glucose_context)
 
-        # 长期记忆召回与轻量分析器并行：embedding+chroma 检索（~几百 ms）
+        # 长期记忆召回与轻量分析器并行：embedding+向量库 检索（~几百 ms）
         # 一般会比 qwen-turbo 分析器（~2s）先完成，所以下面的 await recall_task 通常是零等待。
         recall_task = (
             asyncio.create_task(
