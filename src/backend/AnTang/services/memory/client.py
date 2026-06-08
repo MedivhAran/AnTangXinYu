@@ -117,7 +117,7 @@ class AsyncMemory(MemoryBase):
     def __init__(self):
 
         self.embedding_model = ModelManager.get_embedding_model()
-        self.vector_store = VectorStoreManager.get_chroma_vector()
+        self.vector_store = VectorStoreManager.get_milvus_vector()
         self.llm = ModelManager.get_conversation_model()
         self.db = MemoryHistoryDao
 
@@ -568,7 +568,7 @@ class AsyncMemory(MemoryBase):
             limit (int, optional): 限制返回结果数量。默认 100。
             filters (dict, optional): 检索时应用的过滤条件。默认 None。
             threshold (float, optional): 可接受的最大距离（越小越严格）。默认 None。
-                ChromaDB 默认 L2 距离，越小越相似；为 None 时不过滤。
+                距离（越小越相似）；为 None 时不过滤。
 
         Returns:
             dict: 包含检索结果的字典，一般在 "results" 键下；若启用图谱存储还会带 "relations"。
@@ -638,7 +638,7 @@ class AsyncMemory(MemoryBase):
             if additional_metadata:
                 memory_item_dict["metadata"] = additional_metadata
 
-            # ChromaDB 返回的是距离（越小越相似），threshold 当作距离上限，<= 才是"足够相似"。
+            # 向量距离（越小越相似），threshold 当作距离上限，<= 才是"足够相似"。
             if threshold is None or mem.score <= threshold:
                 original_memories.append(memory_item_dict)
 
