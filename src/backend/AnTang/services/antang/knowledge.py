@@ -137,7 +137,11 @@ async def _reindex_existing_pdf(
     *,
     clear_existing_vectors: bool = False,
 ) -> None:
-    """复用已有 knowledge_file 记录重建向量索引，避免数据库重复插入文件行。"""
+    """复用已有 knowledge_file 记录重建向量索引，避免数据库重复插入文件行。
+
+    对图片版书籍，优先使用 ocr_books.py 预生成的 .md 缓存，
+    避免逐页调用 VL 模型（省大量 token / 时间）。
+    """
     from AnTang.api.services.knowledge_file import KnowledgeFileService
     from AnTang.database.models.knowledge_file import Status
     from AnTang.services.rag.parser import doc_parser
@@ -148,10 +152,21 @@ async def _reindex_existing_pdf(
     try:
         if clear_existing_vectors:
             await RagHandler.delete_documents_es_milvus(knowledge_file.id, knowledge_id)
+
+        # 优先使用预先 OCR 好的 markdown（ocr_books.py 产物），不走 VL 模型
+        md_dir = _pdf_dir().parent / "antang_knowledge_md"
+        source_path: str = str(pdf_path)
+        for candidate in (md_dir.glob("*.md")):
+            stem = pdf_path.stem
+            if stem in candidate.name or candidate.stem in stem:
+                logger.info(f"[antang-kb] {pdf_path.name} → 使用预生成 markdown {candidate.name}")
+                source_path = str(candidate)
+                break
+
         logger.info(f"[antang-kb] 开始重建 {pdf_path.name} 的向量索引")
         chunks = await doc_parser.parse_doc_into_chunks(
             knowledge_file.id,
-            str(pdf_path),
+            source_path,
             knowledge_id,
         )
         logger.info(f"[antang-kb] {pdf_path.name} 解析完成，chunk_count={len(chunks)}")

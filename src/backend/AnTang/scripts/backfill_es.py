@@ -1,8 +1,8 @@
-"""把默认知识库里已存在于 Chroma 的 chunk 回填到 Elasticsearch。
+"""把默认知识库里已存在于 Milvus 的 chunk 回填到 Elasticsearch。
 
 背景：ES 当初是关闭的，默认知识库的 PDF 只进了向量库、没进 ES；而启动时的自动同步
 （sync_local_pdf_folder）只检查向量索引、会跳过这些已索引文件，所以 ES 一直是空的。
-本脚本直接读 Chroma 里已解析好的 chunk，原样镜像进 ES，避免重新解析 PDF / 重传图片。
+本脚本直接读 Milvus 里已解析好的 chunk，原样镜像进 ES，避免重新解析 PDF / 重传图片。
 
 用法：
     uv run python -m AnTang.scripts.backfill_es     # 在 src/backend 目录下执行
@@ -12,9 +12,8 @@
 - ES 服务在线（默认 http://127.0.0.1:9200）；
 - 若开了 IK 分词（rag.enable_ik_analyzer=True），ES 需先装好 ik 插件，否则建索引会失败。
 
-可重复执行：每次先删掉该知识库对应的 ES 索引再重建，不会产生重复文档
-（insert_documents 不带 _id，自增 id 会导致重复，所以这里靠"先删后建"保证幂等）。
-仅适配 chroma 向量库模式。
+可重复执行：每次先删掉该知识库对应的 ES 索引再重建，保证幂等。
+适配 Milvus standalone 模式。
 """
 
 from __future__ import annotations
@@ -41,33 +40,53 @@ async def _run() -> None:
 
     knowledge_id = await get_default_knowledge_id()
 
-    # 1) 从 Chroma 取出默认知识库的全部正文 chunk（跳过 is_summary 摘要条目）
-    get_collection = getattr(milvus_client, "_get_collection_safe", None)
-    if not callable(get_collection):
-        logger.error("[backfill-es] 当前向量库客户端不支持读取集合，回填仅适配 chroma 模式。")
-        return
-    collection = get_collection(knowledge_id)
+    # 1) 从 Milvus 取出默认知识库的全部正文 chunk（跳过 is_summary 摘要条目）
+    output_fields = ["chunk_id", "content", "file_id", "file_name", "update_time", "summary"]
+    collection = milvus_client._get_collection_safe(knowledge_id)
     if collection is None:
-        logger.error(f"[backfill-es] Chroma 集合不存在: {knowledge_id}，请确认向量库已建好。")
+        logger.error(f"[backfill-es] Milvus 集合不存在: {knowledge_id}，请确认向量库已建好。")
         return
 
-    raw = collection.get(where={"is_summary": False}, include=["documents", "metadatas"])
-    documents = raw.get("documents") or []
-    metadatas = raw.get("metadatas") or []
+    # Milvus 单次查询上限 16384，分页拉取全部非摘要 chunk
+    BATCH = 16000
+    offset = 0
+    results: list[dict] = []
+    try:
+        while True:
+            page = collection.query(
+                expr="summary == ''",
+                output_fields=output_fields,
+                limit=BATCH,
+                offset=offset,
+            )
+            if not page:
+                break
+            results.extend(page)
+            offset += len(page)
+            if len(page) < BATCH:
+                break
+    except Exception as e:
+        logger.error(f"[backfill-es] 查询 Milvus 失败: {e}")
+        return
+
+    if not results:
+        logger.warning("[backfill-es] Milvus 里没有可回填的 chunk，跳过。")
+        return
+
     chunks = [
         ChunkModel(
-            chunk_id=(meta or {}).get("chunk_id", ""),
-            content=content or "",
-            file_id=(meta or {}).get("file_id", ""),
-            file_name=(meta or {}).get("file_name", ""),
-            update_time=(meta or {}).get("update_time", ""),
-            knowledge_id=(meta or {}).get("knowledge_id", knowledge_id),
-            summary=(meta or {}).get("summary", ""),
+            chunk_id=(r.get("chunk_id") or ""),
+            content=r.get("content") or "",
+            file_id=(r.get("file_id") or ""),
+            file_name=(r.get("file_name") or ""),
+            update_time=(r.get("update_time") or ""),
+            knowledge_id=knowledge_id,
+            summary=(r.get("summary") or ""),
         )
-        for content, meta in zip(documents, metadatas)
+        for r in results
     ]
     if not chunks:
-        logger.warning("[backfill-es] Chroma 里没有可回填的 chunk，跳过。")
+        logger.warning("[backfill-es] 过滤后没有可回填的 chunk，跳过。")
         return
 
     # 2) 先删掉旧 ES 索引，保证可重复执行不产生重复文档
