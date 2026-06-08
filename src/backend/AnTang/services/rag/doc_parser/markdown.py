@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta
 from uuid import uuid4
 from AnTang.schemas.chunk import ChunkModel
+from AnTang.services.rag.doc_parser.cleaner import clean_markdown
 
 
 class MarkdownParser:
@@ -239,6 +240,7 @@ class MarkdownParser:
 
     async def parse_into_chunks(self, file_id: str, file_path: str, knowledge_id: str):
         text = await self.parse_file(file_path)
+        text = clean_markdown(text)
         contents = await self.parse_markdown_headers(text)
         chunks = []
         update_time = datetime.utcnow() + timedelta(hours=8)
