@@ -1,10 +1,53 @@
-from typing import Any, Dict, Tuple
+from __future__ import annotations
+
+import asyncio
+import os
+import time
+from typing import Any, Dict, Tuple, Sequence
 
 from openai import AsyncOpenAI
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import BaseMessage, AIMessage
+from langchain_core.outputs import ChatResult, ChatGeneration
+from langchain_core.callbacks import CallbackManagerForLLMRun
 from AnTang.core.models.embedding import EmbeddingModel
 from AnTang.settings import app_settings
+
+
+_STUB_DELAY = float(os.environ.get("ANTANG_LLM_STUB_DELAY", "1.5"))
+_STUB_MODE = os.environ.get("ANTANG_LLM_STUB", "off")  # off | async | sync
+_STUB_ANSWER = (
+    "好的，我已经理解了你的问题。根据糖尿病临床指南的相关内容，"
+    "建议你先监测最近的血糖变化趋势，同时留意饮食和运动是否有明显变动。"
+    "如果反复出现低血糖或异常波动，请及时与医生沟通调整方案。"
+)
+
+
+class _StubChatModel(BaseChatModel):
+    """压测打桩模型：固定延迟 + 固定回答，隔离真实 LLM。"""
+
+    model_name: str = "stub"
+    _delay: float = 1.5
+    _sync: bool = False
+
+    def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
+        if self._sync:
+            time.sleep(self._delay)
+        else:
+            raise RuntimeError("StubChatModel._generate called; use async path")
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=_STUB_ANSWER))])
+
+    async def _agenerate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
+        if self._sync:
+            time.sleep(self._delay)
+        else:
+            await asyncio.sleep(self._delay)
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=_STUB_ANSWER))])
+
+    @property
+    def _llm_type(self) -> str:
+        return "stub"
 
 
 class ModelManager:
@@ -45,7 +88,17 @@ class ModelManager:
         return instance
 
     @classmethod
+    def _maybe_stub(cls, kind: str) -> BaseChatModel | None:
+        if _STUB_MODE == "off":
+            return None
+        stub = _StubChatModel(_delay=_STUB_DELAY, sync=(_STUB_MODE == "sync"))
+        cls._cached[("chat", kind, "__stub__", "__stub__", "__stub__")] = stub
+        return stub
+
+    @classmethod
     def get_conversation_model(cls, **kwargs) -> BaseChatModel:
+        if (s := cls._maybe_stub("conversation")) is not None:
+            return s
         conversation_model = app_settings.multi_models.conversation_model
         return cls._get_or_create_chat_openai(
             "conversation",
@@ -57,6 +110,8 @@ class ModelManager:
 
     @classmethod
     def get_qwen_vl_model(cls) -> BaseChatModel:
+        if (s := cls._maybe_stub("qwen_vl")) is not None:
+            return s
         qwen_vl_model = app_settings.multi_models.qwen_vl
         return cls._get_or_create_chat_openai(
             "qwen_vl",
@@ -67,6 +122,8 @@ class ModelManager:
 
     @classmethod
     def get_user_model(cls, **kwargs) -> BaseChatModel:
+        if (s := cls._maybe_stub("user")) is not None:
+            return s
         # 用户绑定的自定义模型也可能被多次请求复用，按配置三元组做缓存。
         # db 的 llm 表不含 extra_body 字段。当 db 模型的 (model_name, base_url) 恰好
         # 与 yaml conversation_model 相同（典型情况：项目仅有一个对话模型，db 与 yaml

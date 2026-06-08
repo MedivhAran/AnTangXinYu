@@ -231,9 +231,9 @@ rag:
     hosts: "http://elasticsearch:9200"   # compose 服务名，容器间互访（勿用 127.0.0.1）
 
   vector_db:
-    host: "127.0.0.1"
+    host: "milvus-standalone"
     port: "19530"
-    mode: "chroma"              # 默认 chroma；想换 milvus 再说
+    mode: "standalone"              # Milvus 向量库（生产）
 
 
 # ============== [无需修改] 对象存储 ==============

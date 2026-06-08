@@ -44,5 +44,7 @@ ENV PYTHONUNBUFFERED=1
 # 暴露端口
 EXPOSE 7860
 
-# 启动服务 (使用 uv run 确保在虚拟环境中执行)
-CMD ["uv", "run", "uvicorn", "AnTang.main:app", "--host", "0.0.0.0", "--port", "7860"]
+# 启动服务：Gunicorn 多 Worker（WEB_CONCURRENCY 控制 worker 数，默认 4）
+# SSE 长连接必须 --timeout 0，否则默认 30s 会掐断流式响应
+ENV WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
+CMD ["sh", "-c", "uv run gunicorn AnTang.main:app -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-4} -b 0.0.0.0:7860 --timeout 0 --graceful-timeout 30"]

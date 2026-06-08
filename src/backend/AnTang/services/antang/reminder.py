@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import os
 
 from loguru import logger
 
@@ -16,6 +17,7 @@ from AnTang.database.dao.notification import NotificationDao
 from AnTang.database.dao.reminder import ReminderDao
 from AnTang.database.models.reminder import ReminderTable
 from AnTang.services.antang.profile import AnTangProfileService
+from AnTang.services.redis import redis_client
 from AnTang.settings import app_settings
 from AnTang.utils.common import count_tokens_usage
 
@@ -113,18 +115,44 @@ class ReminderService:
             await ReminderDao.requeue(reminder.id)
 
 
-async def reminder_heartbeat_loop() -> None:
-    """心跳循环：每 check_interval_seconds 认领并触发到期提醒。
+_LEADER_KEY = "antang:reminder:leader"
+_LEADER_TTL = max(10, app_settings.reminder.check_interval_seconds * 3)
 
-    单个 except 兜底确保循环永不因偶发异常退出。
+
+def _worker_id() -> str:
+    return os.environ.get("HOSTNAME", str(os.getpid()))
+
+
+async def reminder_heartbeat_loop() -> None:
+    """心跳循环：多 worker 下由 Leader 独跑，Redis SETNX 选举 + TTL 故障转移。
+
+    每个 tick：先 GET 确认自己还持有锁 → 是则续租并跑，否则抢锁。
     """
     interval = max(5, app_settings.reminder.check_interval_seconds)
-    logger.info(f"[reminder] 心跳循环启动，间隔 {interval}s")
+    wid = _worker_id()
+    leader = False
+    logger.info(f"[reminder] 心跳循环启动 worker={wid} interval={interval}s")
+
     while True:
         await asyncio.sleep(interval)
         if not app_settings.reminder.enabled:
             continue
         try:
+            if leader:  # 已 Leader → 确认还持有
+                current = redis_client.get(_LEADER_KEY)
+                if isinstance(current, bytes):
+                    current = current.decode()
+                if current == wid:
+                    redis_client.connection.expire(_LEADER_KEY, _LEADER_TTL)  # 续租
+                else:
+                    leader = False  # 被抢走了（可能锁到期 / 其他原因）
+                    continue
+            if not leader:  # 抢锁
+                leader = redis_client.setNx(_LEADER_KEY, wid, _LEADER_TTL)
+                if not leader:
+                    continue  # 其他 worker 持有，跳过
+                logger.info(f"[reminder] Leader 当选 worker={wid}")
+
             due = await ReminderDao.claim_due()
             for reminder in due:
                 await ReminderService.fire(reminder)

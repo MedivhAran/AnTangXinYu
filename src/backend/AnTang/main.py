@@ -16,7 +16,7 @@ from AnTang.settings import init_app_settings
 from AnTang.settings import app_settings
 
 warnings.filterwarnings("ignore")
-logging.getLogger("chromadb").setLevel(logging.WARNING)
+
 
 
 async def register_router(app: FastAPI):
@@ -85,8 +85,13 @@ async def _bootstrap_antang_knowledge(app: FastAPI) -> None:
         return
 
     async def _background_sync() -> None:
+        from AnTang.services.lock import try_acquire_leader
+
+        if not await try_acquire_leader("antang:kb_sync:once", ttl=1800):
+            logger.info("[antang-kb] 其他 worker 已持有同步锁，本 worker 跳过")
+            return
         try:
-            logger.info("[antang-kb] 后台同步任务启动")
+            logger.info("[antang-kb] 后台同步任务启动 (Leader)")
             report = await sync_local_pdf_folder()
             logger.info(f"[antang-kb] 后台同步任务完成: {report}")
         except Exception as err:
