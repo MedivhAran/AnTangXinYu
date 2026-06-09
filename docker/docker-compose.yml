@@ -9,6 +9,8 @@ services:
     container_name: agentchat-mysql
     image: mysql:8.0
     restart: unless-stopped
+    # 默认 max_connections=151，多 worker × 连接池(50/worker)会超；抬到 500 留足余量
+    command: --max-connections=500
     environment:
       MYSQL_ROOT_PASSWORD: 123456
       MYSQL_DATABASE: agentchat
@@ -46,6 +48,34 @@ services:
       timeout: 10s
       retries: 3
 
+  # Elasticsearch 关键词检索服务（带 IK 中文分词插件）
+  elasticsearch:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.elasticsearch
+      args:
+        ES_VERSION: "8.19.0"   # 与后端 elasticsearch 客户端(8.19.0)对齐
+    container_name: agentchat-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false          # 关闭认证：仅 compose 内网可达，切勿对外映射 9200
+      - node.store.allow_mmap=false           # 绕开宿主机 vm.max_map_count 内核要求，省去 sysctl 调整
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"      # JVM 堆，按服务器内存调整
+      - TZ=Asia/Shanghai
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - agentchat-network
+    expose:
+      - "9200"                                 # 只在内部网络暴露，不映射到宿主机
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1" ]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
   # 后端API服务
   backend:
     build:
@@ -57,10 +87,17 @@ services:
       - "7860:7860"
     environment:
       TZ: Asia/Shanghai
+      # 压测用：默认关闭 stub、4 worker；压测时用 shell env 覆盖：
+      #   ANTANG_LLM_STUB=sync WEB_CONCURRENCY=1 docker compose up -d backend
+      ANTANG_LLM_STUB: ${ANTANG_LLM_STUB:-off}
+      ANTANG_LLM_STUB_DELAY: ${ANTANG_LLM_STUB_DELAY:-1.5}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
     volumes:
       - ../data/antang_knowledge_pdfs:/app/data/antang_knowledge_pdfs:ro
+      - ../data/antang_knowledge_md:/app/data/antang_knowledge_md:ro
       - ../data/vector_db:/app/vector_db
       - ../data/memory_db:/app/memory_db
+
     #    volumes:
     #      - ../src/backend:/app:cached
     #      - ../data:/app/data
@@ -71,6 +108,10 @@ services:
       redis:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      milvus:
         condition: service_healthy
     networks:
       - agentchat-network
@@ -132,9 +173,90 @@ services:
       timeout: 20s
       retries: 3
 
+  # Milvus 元数据存储
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.18
+    restart: unless-stopped
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+      - TZ=Asia/Shanghai
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    networks:
+      - agentchat-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Milvus 对象存储（独立 MinIO，避免与项目 MinIO 端口冲突；仅 Milvus 内网访问）
+  milvus-minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      TZ: Asia/Shanghai
+    volumes:
+      - milvus_minio_data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    networks:
+      - agentchat-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Milvus 向量数据库
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.5.9
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY_ID: minioadmin
+      MINIO_SECRET_ACCESS_KEY: minioadmin
+      TZ: Asia/Shanghai
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      etcd:
+        condition: service_healthy
+      milvus-minio:
+        condition: service_healthy
+    networks:
+      - agentchat-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 10
+      start_period: 90s
+
 # 数据卷配置
 volumes:
   mysql_data:
     driver: local
   redis_data:
+    driver: local
+  es_data:
+    driver: local
+  etcd_data:
+    driver: local
+  milvus_minio_data:
+    driver: local
+  milvus_data:
     driver: local

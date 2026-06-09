@@ -94,12 +94,12 @@ class MilvusClient:
             fields = [
                 FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
                 FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=256),
-                FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=2048),
+                FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=8192),
                 FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=1024),
-                FieldSchema(name="summary", dtype=DataType.VARCHAR, max_length=1024),
+                FieldSchema(name="summary", dtype=DataType.VARCHAR, max_length=2048),
                 FieldSchema(name="embedding_summary", dtype=DataType.FLOAT_VECTOR, dim=1024),
                 FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=128),
-                FieldSchema(name="file_name", dtype=DataType.VARCHAR, max_length=256),
+                FieldSchema(name="file_name", dtype=DataType.VARCHAR, max_length=512),
                 FieldSchema(name="knowledge_id", dtype=DataType.VARCHAR, max_length=128),
                 FieldSchema(name="update_time", dtype=DataType.VARCHAR, max_length=128),
             ]
@@ -152,7 +152,8 @@ class MilvusClient:
                 output_fields=["content", "chunk_id", "summary", "file_id", "file_name", "knowledge_id", "update_time"]
             )
 
-            # 格式化结果
+            # 格式化结果——⚠️ L2 距离越小越相关，转为越大越好的相似度
+            # 否则 handler RRF 的 sorted(…, reverse=True) 会把最相关 chunk 排最后
             documents = []
             for hit in results[0]:
                 documents.append(
@@ -164,7 +165,7 @@ class MilvusClient:
                         knowledge_id=hit.entity.knowledge_id,
                         update_time=hit.entity.update_time,
                         summary=hit.entity.summary,
-                        score=hit.distance
+                        score=1.0 / (1.0 + hit.distance),
                     )
                 )
 
@@ -200,7 +201,7 @@ class MilvusClient:
                 output_fields=["content", "chunk_id", "summary", "file_id", "file_name", "knowledge_id", "update_time"]
             )
 
-            # 格式化结果
+            # 格式化结果：L2 → 相似度（越大越好）
             documents = []
             for hit in results[0]:
                 documents.append(
@@ -212,7 +213,7 @@ class MilvusClient:
                         knowledge_id=hit.entity.get("knowledge_id", ""),
                         update_time=hit.entity.get("update_time", ""),
                         summary=hit.entity.get("summary", ""),
-                        score=hit.distance
+                        score=1.0 / (1.0 + hit.distance),
                     )
                 )
 
@@ -252,6 +253,17 @@ class MilvusClient:
             logger.error(f'Error deleting file_id {file_id} from collection {collection_name}: {e}')
             return False
 
+    def get_collection_count(self, collection_name: str) -> int:
+        """获取集合中的文档数量。"""
+        collection = self._get_collection_safe(collection_name)
+        if not collection:
+            return 0
+        try:
+            return collection.num_entities
+        except Exception as e:
+            logger.error(f"Failed to get count for collection '{collection_name}': {e}")
+            return 0
+
     def get_file_document_count(self, collection_name: str, file_id: str) -> int:
         """获取某个文件已写入的向量条目数，用于判断系统知识库是否需要补索引。"""
         collection = self._get_collection_safe(collection_name)
@@ -282,11 +294,11 @@ class MilvusClient:
             file_id_list, file_name_list, update_time_list, knowledge_id_list = [], [], [], []
 
             for chunk in chunks:
-                content_list.append(chunk.content)
-                summary_list.append(chunk.summary)
-                chunk_id_list.append(chunk.chunk_id)
+                content_list.append((chunk.content or "")[:8192])
+                summary_list.append((chunk.summary or "")[:2048] if chunk.summary else "")
+                chunk_id_list.append((chunk.chunk_id or "")[:256])
                 file_id_list.append(chunk.file_id)
-                file_name_list.append(chunk.file_name)
+                file_name_list.append((chunk.file_name or "")[:512])
                 update_time_list.append(chunk.update_time)
                 knowledge_id_list.append(chunk.knowledge_id)
 
@@ -319,18 +331,17 @@ class MilvusClient:
             return False
 
     async def delete_collection(self, collection_name: str) -> bool:
-        """删除集合"""
-        if collection_name not in self.collections:
-            logger.warning(f"Collection '{collection_name}' not found in cache")
-            return False
-
+        """删除集合。按『集合是否真实存在』判断，而非进程内缓存——否则全量重建在新进程里
+        缓存为空时会跳过删除，导致旧数据残留、重新灌入后产生重复。"""
         try:
-            # 删除集合
-            Collection(collection_name).drop()
+            if utility.has_collection(collection_name):
+                Collection(collection_name).drop()
+                logger.info(f"Collection '{collection_name}' dropped successfully")
+            else:
+                logger.info(f"Collection '{collection_name}' does not exist, nothing to drop")
             self.collections.pop(collection_name, None)
-            logger.info(f"Collection '{collection_name}' deleted successfully")
+            self.loaded_collections.discard(collection_name)
             return True
-
         except Exception as e:
             logger.error(f"Failed to delete collection '{collection_name}': {e}")
             return False

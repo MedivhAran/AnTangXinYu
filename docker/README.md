@@ -41,7 +41,7 @@ docker compose -f docker/docker-compose.yml up --build -d
 
 1. **数据库连接**：容器内主机名使用 `mysql` / `redis` / `minio`，不是 `localhost`。
 2. **模型配置**：`multi_models` 下的 `conversation_model`、`embedding`、`qwen_vl`、`text2image`、`rerank` 都需要填入可用的 `api_key` 和 `base_url`。
-3. **RAG**：默认走 ChromaDB（`rag.vector_db.mode: chroma`），向量索引持久化到挂载的 `data/vector_db`。
+3. **RAG**：默认走 Milvus（`rag.vector_db.mode: standalone`），向量索引持久化到 `milvus_data` 卷。
 4. **存储**：默认 MinIO，Bucket 名为 `agentchat`，由 docker-compose 中的容器自动初始化。
 
 ## 数据持久化
@@ -51,7 +51,7 @@ mysql_data           # MySQL 数据卷（docker volume）
 redis_data           # Redis 数据卷（docker volume）
 docker/data/minio_data   # MinIO 文件
 data/antang_knowledge_pdfs/  → /app/data/antang_knowledge_pdfs（只读挂载）
-data/vector_db/              → /app/vector_db（读写挂载）
+data/vector_db/              → (已废弃，改用 Milvus standalone 管理)
 ```
 
 向量库挂载到宿主机是必要的：MySQL 中保存的知识库文件记录与 Chroma collection 必须保持一致，重建容器时不能让其中一边丢失。

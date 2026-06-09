@@ -216,8 +216,8 @@ mcp_credentials:
 # ============== [无需修改] RAG 检索配置 ==============
 rag:
   enable_summary: False         # 安糖走 content 检索，关掉摘要省 LLM 调用
-  enable_elasticsearch: False   # 默认不用 ES
-  enable_ik_analyzer: False
+  enable_elasticsearch: True    # 开启 ES 关键词召回（需 ES 服务在线 + 已建索引）
+  enable_ik_analyzer: True      # 中文分词，需 ES 装好 ik 插件
 
   retrival:
     top_k: 5
@@ -228,12 +228,12 @@ rag:
     overlap_size: 100
 
   elasticsearch:
-    hosts: "http://127.0.0.1:9200"
+    hosts: "http://elasticsearch:9200"   # compose 服务名，容器间互访（勿用 127.0.0.1）
 
   vector_db:
-    host: "127.0.0.1"
+    host: "milvus-standalone"
     port: "19530"
-    mode: "chroma"              # 默认 chroma；想换 milvus 再说
+    mode: "standalone"              # Milvus 向量库（生产）
 
 
 # ============== [无需修改] 对象存储 ==============

@@ -46,5 +46,11 @@ chroma_db/
 memory_db/
 vector_db/
 
+# ---- RAG 生成物 / 缓存（可重新生成，不入库）----
+# OCR 逐页缓存，体积大、可由 PDF 重跑
+data/ocr_cache/
+# 评估 golden 集，由 gen_golden 生成、绑索引快照
+src/backend/AnTang/eval/golden.jsonl
+
 
 # 

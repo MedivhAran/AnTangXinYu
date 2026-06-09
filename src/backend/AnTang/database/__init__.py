@@ -37,6 +37,9 @@ engine = create_engine(
 
 async_engine = create_async_engine(
     url=app_settings.mysql.get('async_endpoint'),
+    pool_size=20,        # 常驻连接，热路径(对话)走异步引擎，默认 5 在高并发下会被打爆
+    max_overflow=30,     # 峰值额外连接，上限 20+30=50/worker
+    pool_timeout=20,     # 取连接最多等 20s，避免请求无限挂起
     pool_pre_ping=True,  # 连接前检查其有效性
     pool_recycle=3600,  # 每隔1小时进行重连一次
     connect_args={

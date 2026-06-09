@@ -68,13 +68,27 @@ class MarkdownRewrite:
         # 创建信号量，限制并发数为3
         semaphore = asyncio.Semaphore(3)
 
+        # 预过滤：空白/近空白 PNG 极小(<3KB)，跳过避免浪费 VL 调用
+        # 真正的图表/流程图通常 15KB 起步
+        _MIN_IMAGE_BYTES = 3072
+        filtered = {}
+        skipped = 0
+        for name, path in image_path_dict.items():
+            try:
+                if os.path.getsize(path) < _MIN_IMAGE_BYTES:
+                    skipped += 1
+                    continue
+            except OSError:
+                continue
+            filtered[name] = path
+        if skipped:
+            logger.info(f"跳过 {skipped}/{len(image_path_dict)} 张小图，不调视觉模型")
+
         async def limited_request(image, image_path):
-            async with semaphore:  # 使用信号量控制并发
+            async with semaphore:
                 return await self.async_request_vl(image, image_path)
 
-        # 创建任务列表
-        tasks = [limited_request(image, image_path)
-                 for image, image_path in image_path_dict.items()]
+        tasks = [limited_request(image, image_path) for image, image_path in filtered.items()]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 获得每张图片的描述信息
@@ -89,7 +103,13 @@ class MarkdownRewrite:
                 continue
 
             image, desc = result
-            image_desc_dict[image] = desc
+            desc = (desc or "").strip()
+            # 后过滤：扔掉明显无用的描述，避免空白/参考文献/纯页面布局充当 chunk 噪声
+            _USELESS = {"空白", "无任何", "无可见", "参考文献列表", "参考文献页", "医学文献页面", "无内容"}
+            if desc and not any(b in desc for b in _USELESS):
+                image_desc_dict[image] = desc
+            else:
+                image_desc_dict[image] = ""  # 空 alt，不产生噪声
         return image_desc_dict
 
     async def process_markdown(self, markdown_text, image_oss_dict, image_desc_dict):
@@ -98,10 +118,16 @@ class MarkdownRewrite:
 
         # 替换函数，在每个匹配的图片链接前加上提示文字
         def replace_image(match):
-            alt_text = match.group(0)  # 提取图片的alt文本
             image_url = match.group(1)  # 提取图片的URL
-            image_oss_object_name = image_oss_dict.get(os.path.basename(image_url))
-            image_desc = image_desc_dict.get(os.path.basename(image_url))
+            key = os.path.basename(image_url)
+            image_oss_object_name = image_oss_dict.get(key)
+            image_desc = image_desc_dict.get(key) or ""
+
+            # 图片没有对应的 OSS 上传记录（如某些图未被成功抽取/上传）：
+            # 不能把 None 传给 build_storage_public_url，否则 lstrip 崩溃。
+            # 优雅降级为只保留描述文字（仍可被检索），去掉死链。
+            if not image_oss_object_name:
+                return image_desc
 
             return f'![{image_desc}]({build_storage_public_url(image_oss_object_name)})'
 

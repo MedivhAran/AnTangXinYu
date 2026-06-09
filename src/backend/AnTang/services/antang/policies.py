@@ -7,7 +7,7 @@
 语气/危险等级判断已交给 light_analyzer，不再做关键词硬匹配。
 """
 
-from AnTang.services.antang.state import GlucoseContext
+from AnTang.services.antang.state import GlucoseContext, RiskLevel
 
 ANTANG_AGENT_NAME = "安糖心语"
 ANTANG_AGENT_TYPE = "AnTangAgent"
@@ -32,4 +32,16 @@ def classify_glucose_zone(glucose_context: GlucoseContext | None) -> str:
         return "low"
     if 3.9 <= value <= 4.5 and glucose_context.trend == "falling":
         return "low_warning"
+    return "normal"
+
+
+def glucose_zone_to_risk_level(zone: str) -> RiskLevel:
+    """把血糖分层映射成医疗风险等级，供饮食/运动建议工具的【风险等级】用。
+
+    severe_low 视为紧急；low / low_warning 视为需注意；其余（含 unknown）按普通处理。
+    """
+    if zone == "severe_low":
+        return "urgent"
+    if zone in ("low", "low_warning"):
+        return "caution"
     return "normal"

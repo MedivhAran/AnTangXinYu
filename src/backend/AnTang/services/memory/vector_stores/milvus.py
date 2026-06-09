@@ -17,14 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 class OutputData(BaseModel):
-    id: Optional[str]  # memory id
-    score: Optional[float]  # distance
-    payload: Optional[Dict]  # metadata
+    """向量库查询结果的统一结构。"""
+
+    id: Optional[str]  # 记忆 ID
+    score: Optional[float]  # 距离
+    payload: Optional[Dict]  # 元数据
 
 
 class MetricType(str, Enum):
     """
-    Metric Constant for milvus/ zilliz server.
+    milvus/zilliz 服务端使用的距离度量常量。
     """
 
     def __str__(self) -> str:
@@ -37,6 +39,8 @@ class MetricType(str, Enum):
     JACCARD = "JACCARD"
 
 class MilvusDB(VectorStoreBase):
+    """Milvus/Zilliz 向量库后端（当前安糖默认用 Chroma，此后端预留未启用）。"""
+
     def __init__(
         self,
         url: str,
@@ -46,15 +50,15 @@ class MilvusDB(VectorStoreBase):
         metric_type: MetricType,
         db_name: str,
     ) -> None:
-        """Initialize the MilvusDB database.
+        """初始化 MilvusDB 数据库。
 
         Args:
-            url (str): Full URL for Milvus/Zilliz server.
-            token (str): Token/api_key for Zilliz server / for local setup defaults to None.
-            collection_name (str): Name of the collection (defaults to mem0).
-            embedding_model_dims (int): Dimensions of the embedding model (defaults to 1536).
-            metric_type (MetricType): Metric type for similarity search (defaults to L2).
-            db_name (str): Name of the database (defaults to "").
+            url (str): Milvus/Zilliz 服务端的完整 URL。
+            token (str): Zilliz 服务端的 token/api_key；本地部署时默认 None。
+            collection_name (str): 集合名称（默认 mem0）。
+            embedding_model_dims (int): embedding 模型的维度（默认 1536）。
+            metric_type (MetricType): 相似度检索使用的度量类型（默认 L2）。
+            db_name (str): 数据库名称（默认 ""）。
         """
         self.collection_name = collection_name
         self.embedding_model_dims = embedding_model_dims
@@ -72,12 +76,12 @@ class MilvusDB(VectorStoreBase):
         vector_size: str,
         metric_type: MetricType = MetricType.COSINE,
     ) -> None:
-        """Create a new collection with index_type AUTOINDEX.
+        """创建一个 index_type 为 AUTOINDEX 的新集合。
 
         Args:
-            collection_name (str): Name of the collection (defaults to mem0).
-            vector_size (str): Dimensions of the embedding model (defaults to 1536).
-            metric_type (MetricType, optional): etric type for similarity search. Defaults to MetricType.COSINE.
+            collection_name (str): 集合名称（默认 mem0）。
+            vector_size (str): embedding 模型的维度（默认 1536）。
+            metric_type (MetricType, optional): 相似度检索的度量类型。默认 MetricType.COSINE。
         """
 
         if self.client.has_collection(collection_name):
@@ -97,25 +101,25 @@ class MilvusDB(VectorStoreBase):
             self.client.create_collection(collection_name=collection_name, schema=schema, index_params=index)
 
     def insert(self, ids, vectors, payloads, **kwargs: Optional[dict[str, any]]):
-        """Insert vectors into a collection.
+        """向集合插入向量。
 
         Args:
-            vectors (List[List[float]]): List of vectors to insert.
-            payloads (List[Dict], optional): List of payloads corresponding to vectors.
-            ids (List[str], optional): List of IDs corresponding to vectors.
+            vectors (List[List[float]]): 要插入的向量列表。
+            payloads (List[Dict], optional): 与向量一一对应的 payload 列表。
+            ids (List[str], optional): 与向量一一对应的 ID 列表。
         """
         for idx, embedding, metadata in zip(ids, vectors, payloads):
             data = {"id": idx, "vectors": embedding, "metadata": metadata}
             self.client.insert(collection_name=self.collection_name, data=data, **kwargs)
 
     def _create_filter(self, filters: dict):
-        """Prepare filters for efficient query.
+        """组装可高效查询的过滤表达式。
 
         Args:
-            filters (dict): filters [user_id, agent_id, run_id]
+            filters (dict): 过滤条件 [user_id, agent_id, run_id]
 
         Returns:
-            str: formated filter.
+            str: 格式化后的过滤表达式。
         """
         operands = []
         for key, value in filters.items():
@@ -127,14 +131,13 @@ class MilvusDB(VectorStoreBase):
         return " and ".join(operands)
 
     def _parse_output(self, data: list):
-        """
-        Parse the output data.
+        """把 Milvus 返回的原始结果解析成 OutputData 列表。
 
         Args:
-            data (Dict): Output data.
+            data (Dict): 原始输出数据。
 
         Returns:
-            List[OutputData]: Parsed output data.
+            List[OutputData]: 解析后的数据。
         """
         memory = []
 
@@ -151,17 +154,16 @@ class MilvusDB(VectorStoreBase):
         return memory
 
     def search(self, query: str, vectors: list, limit: int = 5, filters: dict = None) -> list:
-        """
-        Search for similar vectors.
+        """检索相似向量。
 
         Args:
-            query (str): Query.
-            vectors (List[float]): Query vector.
-            limit (int, optional): Number of results to return. Defaults to 5.
-            filters (Dict, optional): Filters to apply to the search. Defaults to None.
+            query (str): 查询文本。
+            vectors (List[float]): 查询向量。
+            limit (int, optional): 返回结果数量。默认 5。
+            filters (Dict, optional): 检索时应用的过滤条件。默认 None。
 
         Returns:
-            list: Search results.
+            list: 检索结果。
         """
         query_filter = self._create_filter(filters) if filters else None
         hits = self.client.search(
@@ -175,35 +177,32 @@ class MilvusDB(VectorStoreBase):
         return result
 
     def delete(self, vector_id):
-        """
-        Delete a vector by ID.
+        """按 ID 删除一个向量。
 
         Args:
-            vector_id (str): ID of the vector to delete.
+            vector_id (str): 要删除的向量 ID。
         """
         self.client.delete(collection_name=self.collection_name, ids=vector_id)
 
     def update(self, vector_id=None, vector=None, payload=None):
-        """
-        Update a vector and its payload.
+        """更新一个向量及其 payload。
 
         Args:
-            vector_id (str): ID of the vector to update.
-            vector (List[float], optional): Updated vector.
-            payload (Dict, optional): Updated payload.
+            vector_id (str): 要更新的向量 ID。
+            vector (List[float], optional): 更新后的向量。
+            payload (Dict, optional): 更新后的 payload。
         """
         schema = {"id": vector_id, "vectors": vector, "metadata": payload}
         self.client.upsert(collection_name=self.collection_name, data=schema)
 
     def get(self, vector_id):
-        """
-        Retrieve a vector by ID.
+        """按 ID 读取一个向量。
 
         Args:
-            vector_id (str): ID of the vector to retrieve.
+            vector_id (str): 要读取的向量 ID。
 
         Returns:
-            OutputData: Retrieved vector.
+            OutputData: 读取到的向量。
         """
         result = self.client.get(collection_name=self.collection_name, ids=vector_id)
         output = OutputData(
@@ -214,37 +213,34 @@ class MilvusDB(VectorStoreBase):
         return output
 
     def list_cols(self):
-        """
-        List all collections.
+        """列出全部集合。
 
         Returns:
-            List[str]: List of collection names.
+            List[str]: 集合名称列表。
         """
         return self.client.list_collections()
 
     def delete_col(self):
-        """Delete a collection."""
+        """删除集合。"""
         return self.client.drop_collection(collection_name=self.collection_name)
 
     def col_info(self):
-        """
-        Get information about a collection.
+        """获取集合信息。
 
         Returns:
-            Dict[str, Any]: Collection information.
+            Dict[str, Any]: 集合信息。
         """
         return self.client.get_collection_stats(collection_name=self.collection_name)
 
     def list(self, filters: dict = None, limit: int = 100) -> list:
-        """
-        List all vectors in a collection.
+        """列出集合中的全部向量。
 
         Args:
-            filters (Dict, optional): Filters to apply to the list.
-            limit (int, optional): Number of vectors to return. Defaults to 100.
+            filters (Dict, optional): 列举时应用的过滤条件。
+            limit (int, optional): 返回向量数量。默认 100。
 
         Returns:
-            List[OutputData]: List of vectors.
+            List[OutputData]: 向量列表。
         """
         query_filter = self._create_filter(filters) if filters else None
         result = self.client.query(collection_name=self.collection_name, filter=query_filter, limit=limit)
@@ -255,7 +251,7 @@ class MilvusDB(VectorStoreBase):
         return [memories]
 
     def reset(self):
-        """Reset the index by deleting and recreating it."""
+        """通过删除并重建集合来重置索引。"""
         logger.warning(f"Resetting index {self.collection_name}...")
         self.delete_col()
         self.create_col(self.collection_name, self.embedding_model_dims, self.metric_type)

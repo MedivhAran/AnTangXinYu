@@ -3,10 +3,16 @@ from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 
 from AnTang.database.dao.dialog import DialogDao
 from AnTang.database.dao.history import HistoryDao
+from AnTang.services.redis import redis_client
 from AnTang.utils.file_utils import normalize_storage_public_url
 
 Assistant_Role = "assistant"
 User_Role = "user"
+
+# 对话历史 Redis 缓存
+_HIST_KEY_PREFIX = "antang:hist:"
+_HIST_TTL = 2 * 3600  # 2h
+_HIST_PROACTIVE = "antang:proactive:"  # AI 主动提醒缓存（Part 6 预留）
 
 
 class HistoryService:
@@ -64,6 +70,34 @@ class HistoryService:
             raise ValueError(f"Get dialog history is appear error: {err}")
 
     @classmethod
+    def _hist_key(cls, dialog_id: str) -> str:
+        return _HIST_KEY_PREFIX + dialog_id
+
+    @classmethod
+    def _cache_messages(cls, dialog_id: str, messages: List[BaseMessage]) -> None:
+        try:
+            data = [{"role": m.__class__.__name__, "content": m.content} for m in messages]
+            redis_client.set(cls._hist_key(dialog_id), data, _HIST_TTL)
+        except Exception:
+            pass  # 缓存写失败不阻塞主流程
+
+    @classmethod
+    def _read_cached_messages(cls, dialog_id: str) -> List[BaseMessage] | None:
+        try:
+            raw = redis_client.get(cls._hist_key(dialog_id))
+            if not raw:
+                return None
+            messages: List[BaseMessage] = []
+            for item in raw:
+                if item.get("role") == "AIMessage":
+                    messages.append(AIMessage(content=item["content"]))
+                elif item.get("role") == "HumanMessage":
+                    messages.append(HumanMessage(content=item["content"]))
+            return messages if messages else None
+        except Exception:
+            return None
+
+    @classmethod
     async def save_chat_history(
         cls, role, content, events, dialog_id, token_usage: int = 0, memory_enable: bool = False
     ):
@@ -71,14 +105,31 @@ class HistoryService:
             role=role, content=content, events=events, dialog_id=dialog_id, token_usage=token_usage
         )
         await DialogDao.touch_dialog_last_active(dialog_id=dialog_id)
+        # 写入 Redis 缓存（write-through）：先从缓存读已有轮次，追新轮，再回写
+        try:
+            cached = cls._read_cached_messages(dialog_id) or []
+            new_msg = AIMessage(content=content) if role == Assistant_Role else HumanMessage(content=content)
+            cached.append(new_msg)
+            if len(cached) > 40:  # 只缓存最近 40 条（~20 轮）
+                cached = cached[-40:]
+            cls._cache_messages(dialog_id, cached)
+        except Exception:
+            pass
 
     @classmethod
     async def get_short_term_messages(cls, dialog_id, user_id: str):
-        """通过上次总结的时间来获取短期记忆, summary_last_time"""
+        """获取短期消息：优先 Redis 缓存，未命中再查 MySQL 并回填。"""
+        # 校验权限
         db_dialog = await DialogDao.select_dialog_by_id(dialog_id)
         if db_dialog.user_id != user_id:
             raise ValueError(f"没有权限获取 {dialog_id} 的对话信息")
 
+        # 先查 Redis 缓存
+        cached = cls._read_cached_messages(dialog_id)
+        if cached is not None:
+            return cached
+
+        # 缓存未命中 → MySQL 并回填
         short_term_messages = await HistoryDao.get_short_term_messages(dialog_id, db_dialog.summary_last_time)
         messages: List[BaseMessage] = []
         for msg in short_term_messages:
@@ -86,4 +137,5 @@ class HistoryService:
                 messages.append(AIMessage(content=msg.content))
             elif msg.role == User_Role:
                 messages.append(HumanMessage(content=msg.content))
+        cls._cache_messages(dialog_id, messages)
         return messages
