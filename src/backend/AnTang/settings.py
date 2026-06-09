@@ -4,7 +4,17 @@ from loguru import logger
 from types import SimpleNamespace
 from pydantic.v1 import BaseSettings, Field
 
-from AnTang.schemas.common import AntangLightAnalyzerConfig, ReminderConfig, BootstrapConfig, MultiModels, Tools, Rag, StorageConfig, ServerConfig
+from AnTang.schemas.common import (
+    AntangLightAnalyzerConfig,
+    ReminderConfig,
+    ProactiveCareConfig,
+    BootstrapConfig,
+    MultiModels,
+    Tools,
+    Rag,
+    StorageConfig,
+    ServerConfig,
+)
 
 
 class Settings(BaseSettings):
@@ -25,16 +35,18 @@ class Settings(BaseSettings):
     multi_models: Optional[MultiModels] = None
     antang_light_analyzer: AntangLightAnalyzerConfig = Field(default_factory=AntangLightAnalyzerConfig)
     reminder: ReminderConfig = Field(default_factory=ReminderConfig)
+    proactive_care: ProactiveCareConfig = Field(default_factory=ProactiveCareConfig)
 
 
 app_settings = Settings()
+
 
 async def init_app_settings(file_path: str = None):
     global app_settings
 
     file_path = file_path or "AnTang/config.yaml"
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
             if data is None:
                 logger.error("YAML 文件解析为空")
@@ -64,6 +76,9 @@ async def init_app_settings(file_path: str = None):
 
             if "reminder" in data:
                 data["reminder"] = ReminderConfig(**data["reminder"])
+
+            if "proactive_care" in data:
+                data["proactive_care"] = ProactiveCareConfig(**data["proactive_care"])
 
             for key, value in data.items():
                 setattr(app_settings, key, value)

@@ -3,12 +3,13 @@
 - reminder_heartbeat_loop：lifespan 后台循环，每 N 秒认领并触发到期提醒。
 - ReminderService.fire：生成文案 → 落 history（进原会话）→ 写 notification → 顺延/结束。
 
-文案生成走轻量独立 LLM（仿 light_analyzer），不实例化 AnTangAgent、不跑完整对话轮、
-不调 finalize_turn，所以不会把这条"主动提醒"污染进长期记忆 / 画像。
+文案生成直接用主对话模型（deepseek-v4-flash）独立调用，不实例化 AnTangAgent、
+不跑完整对话轮、不调 finalize_turn，所以不会把这条"主动提醒"污染进长期记忆 / 画像。
 """
 
 import asyncio
 import os
+import time
 
 from loguru import logger
 
@@ -34,21 +35,10 @@ class ReminderService:
 
     @classmethod
     async def _get_model(cls):
-        """复用轻量分析器那档快模型；未配置则回退主对话模型。"""
-        if cls._model is not None:
-            return cls._model
+        """直接用主对话模型（deepseek-v4-flash），生成提醒/关怀文案足够快。"""
+        if cls._model is None:
+            from AnTang.core.models.manager import ModelManager
 
-        from AnTang.core.models.manager import ModelManager
-
-        multi = app_settings.multi_models
-        analyzer_cfg = getattr(multi, "light_analyzer", None) if multi else None
-        if analyzer_cfg and analyzer_cfg.model_name:
-            cls._model = ModelManager.get_user_model(
-                model=analyzer_cfg.model_name,
-                base_url=analyzer_cfg.base_url,
-                api_key=analyzer_cfg.api_key,
-            )
-        else:
             cls._model = ModelManager.get_conversation_model()
         return cls._model
 
@@ -88,10 +78,7 @@ class ReminderService:
                 events=[
                     {
                         "type": "event",
-                        "data": {
-                            "event_type": "proactive_reminder",
-                            "reminder_id": reminder.id,
-                        },
+                        "data": {"event_type": "proactive_reminder", "reminder_id": reminder.id, "hidden": True},
                     }
                 ],
                 dialog_id=reminder.dialog_id,
@@ -124,9 +111,12 @@ async def reminder_heartbeat_loop() -> None:
 
     每个 tick：先 GET 确认自己还持有锁 → 是则续租并跑，否则抢锁。
     """
+    from AnTang.services.antang.proactive_care import ProactiveCareService
+
     interval = max(5, app_settings.reminder.check_interval_seconds)
     wid = _worker_id()
     leader = False
+    last_care_scan = 0.0  # 主动关怀扫描降频用：记上次扫描时间
     logger.info(f"[reminder] 心跳循环启动 worker={wid} interval={interval}s")
 
     while True:
@@ -152,5 +142,14 @@ async def reminder_heartbeat_loop() -> None:
             due = await ReminderDao.claim_due()  # 认领到期提醒，更新状态避免重复触发
             for reminder in due:
                 await ReminderService.fire(reminder)
+
+            # 主动关怀：心跳每 30s 一跳，但关怀状态按小时/天变化，没必要每跳都扫，
+            # 降频到约 scan_interval 秒一次；同样只在 Leader 上跑。
+            care = getattr(app_settings, "proactive_care", None)
+            if care and care.enabled:
+                now = time.time()
+                if now - last_care_scan >= care.scan_interval_seconds:
+                    last_care_scan = now
+                    await ProactiveCareService.scan_and_fire(now)
         except Exception as err:
             logger.warning(f"[reminder] 心跳异常（已忽略，循环继续）: {err}")

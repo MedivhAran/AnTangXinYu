@@ -31,6 +31,7 @@ from AnTang.services.antang.cgm_report import (
 )
 from AnTang.services.antang.light_analyzer import light_analyzer
 from AnTang.services.antang.policies import classify_glucose_zone
+from AnTang.services.antang.proactive_care import ProactiveCareService
 from AnTang.services.antang.profile import AnTangProfileService
 from AnTang.services.antang.prompts import (
     build_turn_system_prompt_v2,
@@ -527,6 +528,13 @@ class AnTangAgent(GeneralAgent):
             previous=previous_dialog_state,
             analyzer_result=analyzer_result,
             assistant_response=response_content,
+        )
+
+        # 主动关怀：把这轮的情绪/血糖情况记进计量值（只更新数值，发不发由心跳统一把关）
+        ProactiveCareService.on_interaction(
+            self.agent_config.user_id,
+            new_dialog_state.dominant_emotions,
+            classify_glucose_zone(self.current_glucose_context),
         )
 
         yield self.wrap_event(

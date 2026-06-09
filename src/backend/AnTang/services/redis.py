@@ -86,6 +86,27 @@ class RedisClient:
         finally:
             self.close()
 
+    def sadd(self, name, *values, expiration=None):
+        try:
+            r = self.connection.sadd(name, *values)
+            if expiration:
+                self.connection.expire(name, expiration)
+            return r
+        finally:
+            self.close()
+
+    def smembers(self, name):
+        try:
+            return self.connection.smembers(name)
+        finally:
+            self.close()
+
+    def srem(self, name, *values):
+        try:
+            return self.connection.srem(name, *values)
+        finally:
+            self.close()
+
     def delete(self, key):
         try:
             return self.connection.delete(key)
