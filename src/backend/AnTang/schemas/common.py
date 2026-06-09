@@ -9,6 +9,7 @@ class ModelConfig(BaseModel):
     # 透传给 OpenAI 兼容 API 的 extra_body，用于关闭 DeepSeek 思考模式等厂商特殊参数。
     extra_body: Optional[dict] = None
 
+
 class MultiModels(BaseModel):
     class Config:
         # 允许从dict额外属性创建模型
@@ -20,6 +21,7 @@ class MultiModels(BaseModel):
     embedding: ModelConfig = Field(default_factory=ModelConfig)
     rerank: ModelConfig = Field(default_factory=ModelConfig)
     light_analyzer: ModelConfig = Field(default_factory=ModelConfig)
+
 
 class Tools(BaseModel):
     class Config:
@@ -57,7 +59,6 @@ class BootstrapConfig(BaseModel):
     refresh_system_skills_on_startup: bool = False
 
 
-
 class OSSConfig(BaseModel):
     access_key_id: str
     access_key_secret: str
@@ -72,6 +73,7 @@ class MinioConfig(BaseModel):
     endpoint: str
     bucket_name: str
     base_url: str
+
 
 class StorageConfig(BaseModel):
     mode: Literal["oss", "minio"]
@@ -90,6 +92,7 @@ class StorageConfig(BaseModel):
     def active(self):
         return self.oss if self.mode == "oss" else self.minio
 
+
 class ServerConfig(BaseModel):
     name: str = "AgentChat"
     version: str = "2.5.0"
@@ -100,6 +103,7 @@ class ServerConfig(BaseModel):
 
 class AntangLightAnalyzerConfig(BaseModel):
     """安糖轻量分析器的行为开关。模型身份信息位于 multi_models.light_analyzer。"""
+
     enabled: bool = True
     timeout_ms: int = 3000
     max_output_tokens: int = 220
@@ -109,7 +113,16 @@ class AntangLightAnalyzerConfig(BaseModel):
 
 class ReminderConfig(BaseModel):
     """心跳提醒系统的行为开关。生成提醒文案所用模型沿用 multi_models.light_analyzer。"""
+
     enabled: bool = True
     check_interval_seconds: int = 30
     generate_timeout_ms: int = 10000
     max_output_tokens: int = 200
+
+
+class ProactiveCareConfig(BaseModel):
+    """主动关怀开关。默认关闭，因为它会在用户没主动询问时主动发消息，部署时确认无误再打开。
+    具体的计量阈值/加分/衰减等调参常量在 services/antang/proactive_care.py 里。"""
+
+    enabled: bool = True
+    scan_interval_seconds: int = 300  # 关怀扫描的降频间隔（心跳每 30s 一跳，这里约 5 分钟扫一次）

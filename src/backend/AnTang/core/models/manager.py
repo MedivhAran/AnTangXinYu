@@ -14,7 +14,6 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from AnTang.core.models.embedding import EmbeddingModel
 from AnTang.settings import app_settings
 
-
 _STUB_DELAY = float(os.environ.get("ANTANG_LLM_STUB_DELAY", "1.5"))
 _STUB_MODE = os.environ.get("ANTANG_LLM_STUB", "off")  # off | async | sync
 _STUB_ANSWER = (
