@@ -143,7 +143,7 @@ def _tool_rounds(
 def _without_web_search(
     tools: Sequence[BaseTool | dict[str, Any]],
 ) -> list[BaseTool | dict[str, Any]]:
-    """第三轮只保留读取工具；未知供应商工具保持原样。"""
+    """最后一轮只保留读取工具；未知供应商工具保持原样。"""
 
     return [
         tool

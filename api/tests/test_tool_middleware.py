@@ -213,8 +213,8 @@ def completed_tool_rounds(count: int) -> list[AnyMessage]:
     [
         (0, ["web_search", "web_fetch"], None),
         (1, ["web_search", "web_fetch"], None),
-        (2, ["web_fetch"], None),
-        (3, ["web_search", "web_fetch"], {"type": "none"}),
+        (9, ["web_fetch"], None),
+        (10, ["web_search", "web_fetch"], {"type": "none"}),
     ],
 )
 async def test_model_only_sees_tools_valid_for_remaining_rounds(
@@ -226,7 +226,7 @@ async def test_model_only_sees_tools_valid_for_remaining_rounds(
     messages = completed_tool_rounds(completed_round_count)
     middleware = ToolPersistenceMiddleware(
         make_session_factory(db_session),
-        max_tool_rounds=3,
+        max_tool_rounds=10,
         max_parallel_tool_calls=5,
     )
     context = CoreAgentContext(
@@ -682,10 +682,10 @@ async def test_last_tool_round_rejects_new_search_before_provider_call(
 ) -> None:
     user, prepared_run = await make_running_run(db_session, "last_round_search")
     call = tool_call("call-last-round-search", "不应执行")
-    messages = [*completed_tool_rounds(2), AIMessage(content="", tool_calls=[call])]
+    messages = [*completed_tool_rounds(9), AIMessage(content="", tool_calls=[call])]
     middleware = ToolPersistenceMiddleware(
         make_session_factory(db_session),
-        max_tool_rounds=3,
+        max_tool_rounds=10,
         max_parallel_tool_calls=5,
     )
     activities: list[object] = []
@@ -718,7 +718,7 @@ async def test_last_tool_round_rejects_new_search_before_provider_call(
 @pytest.mark.parametrize(
     ("round_count", "parallel_count", "error_text"),
     [
-        (4, 1, "最多执行 3 轮"),
+        (11, 1, "最多执行 10 轮"),
         (1, 6, "每轮最多执行 5 个"),
     ],
 )
@@ -743,7 +743,7 @@ async def test_tool_limits_fail_before_execution(
 
     middleware = ToolPersistenceMiddleware(
         make_session_factory(db_session),
-        max_tool_rounds=3,
+        max_tool_rounds=10,
         max_parallel_tool_calls=5,
     )
     request = make_request(

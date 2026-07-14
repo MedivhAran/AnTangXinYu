@@ -42,7 +42,7 @@
 - Agent Harness 使用 LangGraph；单个 Agent 的模型与工具循环使用 LangChain `create_agent`。
 - 联网搜索使用 Tavily Search 与 Extract API，通过官方异步 Python SDK 接入。
 - LangGraph PostgreSQL Checkpointer 保存单次 AgentRun 的流程状态，为后续暂停、恢复和故障续跑提供基础。
-- 当前 Core Agent 支持最多三轮工具调用，每轮最多五个并行只读工具。首版使用单 API 进程，服务重启时将遗留的运行和工具调用明确标记为失败；复杂工作流的自动续跑在对应模块设计。
+- 当前 Core Agent 支持最多十轮工具调用，每轮最多五个并行只读工具。首版使用单 API 进程，服务重启时将遗留的运行和工具调用明确标记为失败；复杂工作流的自动续跑在对应模块设计。
 - PostgreSQL 业务表负责用户、原始聊天消息、摘要快照、工具调用、健康档案和可审计运行记录。
 - LightRAG 优先评估 PostgreSQL 一体化后台：KV、文档状态、pgvector 向量和 Apache AGE 图存储。
 - Qdrant 已从当前技术方案中移除。

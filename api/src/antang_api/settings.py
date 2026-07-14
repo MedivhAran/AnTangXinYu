@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     )
 
     # 一轮对话中限制模型连续调用工具的次数和单次并行数量。
-    agent_max_tool_rounds: int = Field(default=3, gt=0)
+    agent_max_tool_rounds: int = Field(default=10, gt=0)
     agent_max_parallel_tool_calls: int = Field(default=5, gt=0)
 
     @property

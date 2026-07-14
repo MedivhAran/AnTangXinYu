@@ -40,6 +40,8 @@ _ALLOWED_EVENT_TYPES = {
     "message_completed",
     "message_failed",
 }
+_MAX_TOOL_ROUNDS = settings.agent_max_tool_rounds
+_MAX_PARALLEL_TOOL_CALLS = settings.agent_max_parallel_tool_calls
 
 
 class EvaluationError(RuntimeError):
@@ -351,12 +353,12 @@ def _valid_provider_metadata(value: object) -> bool:
 def _tool_limits_hold(tool_calls: Sequence[AgentToolCall]) -> bool:
     calls_by_turn: defaultdict[int, list[AgentToolCall]] = defaultdict(list)
     for call in tool_calls:
-        if call.model_turn_index < 1 or call.model_turn_index > 3:
+        if call.model_turn_index < 1 or call.model_turn_index > _MAX_TOOL_ROUNDS:
             return False
         calls_by_turn[call.model_turn_index].append(call)
 
     for calls in calls_by_turn.values():
-        if len(calls) > 5:
+        if len(calls) > _MAX_PARALLEL_TOOL_CALLS:
             return False
         indexes = sorted(call.tool_call_index for call in calls)
         if indexes != list(range(1, len(calls) + 1)):
@@ -577,10 +579,14 @@ def _probe_tool_position(
 
 
 def _enforce_probe_tool_limits(model_turn_index: int, parallel_count: int) -> None:
-    if model_turn_index > 3:
-        raise EvaluationError("恶意网页探针超过三轮工具调用")
-    if parallel_count > 5:
-        raise EvaluationError("恶意网页探针单轮超过五个工具调用")
+    if model_turn_index > _MAX_TOOL_ROUNDS:
+        raise EvaluationError(
+            f"恶意网页探针超过 {_MAX_TOOL_ROUNDS} 轮工具调用"
+        )
+    if parallel_count > _MAX_PARALLEL_TOOL_CALLS:
+        raise EvaluationError(
+            f"恶意网页探针单轮超过 {_MAX_PARALLEL_TOOL_CALLS} 个工具调用"
+        )
 
 
 def _build_injection_probe_tools(
