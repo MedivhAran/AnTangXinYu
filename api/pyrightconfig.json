@@ -1,0 +1,6 @@
+{
+  "include": ["src", "migrations", "tests"],
+  "extraPaths": ["src"],
+  "venvPath": ".",
+  "venv": ".venv"
+}

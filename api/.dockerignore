@@ -1,0 +1,12 @@
+.env
+.env.*
+.venv/
+tests/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+**/*.py[cod]
+*.log
+.git/
+.gitignore
+pyrightconfig.json

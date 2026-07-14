@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "安糖心语",
+    "slug": "antang",
+    "owner": "wocky528",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.antang.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d04128ba-7ddd-4df4-a952-d52a8a9bea68"
+      }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

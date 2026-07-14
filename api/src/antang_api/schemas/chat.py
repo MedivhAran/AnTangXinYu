@@ -1,0 +1,105 @@
+from datetime import datetime
+from typing import Annotated, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, StringConstraints
+
+from antang_api.models import MessageRole, MessageStatus
+
+MessageContent = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
+]
+
+
+class SendMessageRequest(BaseModel):
+    """手机发送一条用户消息时提交的数据。"""
+
+    # 由手机生成。同一次发送即使因网络问题重试，也继续使用同一个 ID。
+    client_message_id: UUID
+    content: MessageContent
+
+
+## 聊天流包含消息生命周期、Agent 活动阶段和文字增量。
+
+
+class MessageStartedEvent(BaseModel):
+    """事件：后端已经保存消息，并开始执行 Core Agent。"""
+
+    type: Literal["message_started"] = "message_started"
+    user_message_id: UUID
+    assistant_message_id: UUID
+    run_id: UUID
+
+
+class TextDeltaEvent(BaseModel):
+    """事件：模型刚刚生成的一小段文字。"""
+
+    type: Literal["text_delta"] = "text_delta"
+    delta: str
+
+
+class AgentActivityEvent(BaseModel):
+    """事件：Core Agent 当前正在执行的用户可理解阶段。"""
+
+    type: Literal["agent_activity"] = "agent_activity"
+    phase: Literal["thinking", "searching", "reading", "organizing"]
+
+
+class MessageCompletedEvent(BaseModel):
+    """事件：回答已经完整生成并保存。"""
+
+    type: Literal["message_completed"] = "message_completed"
+    input_tokens: int
+    output_tokens: int
+
+
+class MessageFailedEvent(BaseModel):
+    """事件：本次 Agent 执行失败。"""
+
+    type: Literal["message_failed"] = "message_failed"
+    code: Literal["agent_run_failed"] = "agent_run_failed"
+    error_type: str
+
+
+# {"type":"message_started", ...}
+# {"type":"agent_activity", "phase":"searching"}
+# {"type": "text_delta", "delta": "我"}
+# {"type": "text_delta", "delta": "在这里"}
+# {"type": "message_completed", "input_tokens": 100, "output_tokens": 20}
+
+# 一个 ChatStreamEvent 是上面五种事件之一。
+ChatStreamEvent = (
+    MessageStartedEvent
+    | AgentActivityEvent
+    | TextDeltaEvent
+    | MessageCompletedEvent
+    | MessageFailedEvent
+)
+
+
+def encode_stream_event(event: ChatStreamEvent) -> str:
+    """把一个事件编码成 NDJSON 中的一行。"""
+
+    return event.model_dump_json() + "\n"
+
+
+class ChatMessageResponse(BaseModel):
+    """历史消息接口返回的一条原始聊天消息。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    client_message_id: UUID | None
+    role: MessageRole
+    status: MessageStatus
+    content: str
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class MessageHistoryResponse(BaseModel):
+    """按时间升序返回的一页聊天历史。"""
+
+    messages: list[ChatMessageResponse]
+    next_before: UUID | None

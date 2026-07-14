@@ -1,0 +1,10 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python.defaultInterpreterPath": "${workspaceFolder}/api/.venv/bin/python",
+    "python.analysis.useNearestConfiguration": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/api/src"
+    ],
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.inlayHints.callArgumentNames": "partial"
+}
