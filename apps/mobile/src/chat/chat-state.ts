@@ -101,6 +101,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         role: 'user',
         status: 'completed',
         content: action.content,
+        sources: [],
         createdAt: action.now,
         completedAt: null,
       };
@@ -110,6 +111,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         role: 'assistant',
         status: 'generating',
         content: '',
+        sources: [],
         createdAt: action.now,
         completedAt: null,
       };
@@ -164,6 +166,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           messages: updatePendingAssistant(state, (message) => ({
             ...message,
             status: 'completed',
+            sources: event.sources,
             completedAt: new Date().toISOString(),
           })),
           sending: false,

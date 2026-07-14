@@ -1,9 +1,14 @@
+import json
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from antang_api.context.builder import SUMMARY_PREFIX, build_chat_context
+from antang_api.context.builder import (
+    HISTORICAL_WEB_RESULT_NOTICE,
+    SUMMARY_PREFIX,
+    build_chat_context,
+)
 from antang_api.models import (
     AgentRun,
     AgentRunStatus,
@@ -234,7 +239,14 @@ async def test_build_chat_context_rebuilds_completed_tool_calls_by_model_turn(
         role=MessageRole.ASSISTANT,
         status=MessageStatus.COMPLETED,
         # 单条聊天消息保留用户实际看到的所有模型轮文字。
-        content="我先帮你查一下。\n\n这是我查到的结论。",
+        content="我先帮你查一下。\n\n这是我查到的结论。[S1]",
+        sources=[
+            {
+                "source_id": "S1",
+                "title": "旧来源",
+                "url": "https://example.com",
+            }
+        ],
     )
     current_message = Message(
         user_id=user.id,
@@ -277,7 +289,15 @@ async def test_build_chat_context_rebuilds_completed_tool_calls_by_model_turn(
                 model_turn_index=1,
                 tool_call_index=0,
                 arguments={"url": "https://example.com", "query": "关键结论"},
-                result="网页正文片段",
+                result=json.dumps(
+                    {
+                        "source_id": "S1",
+                        "title": "旧来源",
+                        "url": "https://example.com",
+                        "content": "网页正文片段",
+                    },
+                    ensure_ascii=False,
+                ),
                 status=AgentToolCallStatus.COMPLETED,
             ),
             AgentToolCall(
@@ -315,13 +335,23 @@ async def test_build_chat_context_rebuilds_completed_tool_calls_by_model_turn(
     second_tool_turn = context.messages[4]
     assert isinstance(second_tool_turn, AIMessage)
     assert [call["id"] for call in second_tool_turn.tool_calls] == ["fetch-0"]
+    historical_fetch = context.messages[5]
+    assert isinstance(historical_fetch, ToolMessage)
+    assert historical_fetch.additional_kwargs == {"lc_source": "historical_tool_result"}
+    assert json.loads(str(historical_fetch.content)) == {
+        "historical_result": True,
+        "title": "旧来源",
+        "url": "https://example.com",
+        "content": "网页正文片段",
+        "notice": HISTORICAL_WEB_RESULT_NOTICE,
+    }
     assert [message.content for message in context.messages] == [
         "帮我查一下近期资料。",
         "",
         "第一组搜索结果",
         "第二组搜索结果",
         "",
-        "网页正文片段",
+        historical_fetch.content,
         "我先帮你查一下。\n\n这是我查到的结论。",
         "你刚才还看了哪些网页？",
     ]

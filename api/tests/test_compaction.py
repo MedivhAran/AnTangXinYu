@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from antang_api.context.compaction import (
@@ -101,7 +101,20 @@ async def test_compaction_snapshots_form_a_chain(
             user_id=user_id,
             role=role,
             status=MessageStatus.COMPLETED,
-            content=f"第一阶段消息 {number}",
+            content=(
+                "第一阶段消息 2。[S1]" if number == 2 else f"第一阶段消息 {number}"
+            ),
+            sources=(
+                [
+                    {
+                        "source_id": "S1",
+                        "title": "测试来源",
+                        "url": "https://example.com/source",
+                    }
+                ]
+                if number == 2
+                else []
+            ),
         )
         db_session.add(message)
         await db_session.flush()
@@ -127,6 +140,7 @@ async def test_compaction_snapshots_form_a_chain(
         },
     )
     responses = [first_response, second_response]
+    compaction_inputs: list[str] = []
 
     async def invoke_without_open_transaction(
         *_args: object,
@@ -135,6 +149,9 @@ async def test_compaction_snapshots_form_a_chain(
         """摘要模型执行期间，业务数据库事务必须已经结束。"""
 
         assert db_session.in_transaction() is False
+        messages = cast("list[object]", _args[0])
+        assert isinstance(messages[-1], HumanMessage)
+        compaction_inputs.append(messages[-1].text)
         return responses.pop(0)
 
     fake_model = cast(
@@ -158,6 +175,8 @@ async def test_compaction_snapshots_form_a_chain(
     assert first_summary.content == "第一份连续性摘要"
     assert first_summary.input_tokens == 120
     assert first_summary.output_tokens == 24
+    assert "第一阶段消息 2。" in compaction_inputs[0]
+    assert "[S1]" not in compaction_inputs[0]
     first_summary_id = first_summary.id
 
     later_messages: list[Message] = []

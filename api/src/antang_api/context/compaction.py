@@ -2,6 +2,7 @@ from uuid import UUID
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import (
+    BaseMessage,
     HumanMessage,
     SystemMessage,
     get_buffer_string,
@@ -9,7 +10,7 @@ from langchain_core.messages import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from antang_api.context.builder import to_model_message
+from antang_api.context.builder import to_historical_model_message
 from antang_api.models import (
     ConversationSummary,
     Message,
@@ -34,12 +35,19 @@ SUMMARY_SYSTEM_PROMPT = """
 - 保留事实、不确定性和用户原本表达的语气；
 - 摘要只负责维持对话连续性；
 - 健康档案、心理判断和陪伴记忆由其他系统处理；
+- 不保留 [S1] 这类只对原回答有效的来源编号；
 - 输出连续、简洁的摘要正文。
 """.strip()
 
 
 class InsufficientMessagesForCompactionError(Exception):
     """当前可以压缩的完整对话数量不足。"""
+
+
+def to_summary_message(message: Message) -> BaseMessage:
+    """移除只属于原回答的来源编号，再交给摘要模型。"""
+
+    return to_historical_model_message(message)
 
 
 def select_messages_to_compact(
@@ -115,7 +123,7 @@ async def compact_conversation(
     )
 
     transcript = get_buffer_string(
-        [to_model_message(message) for message in messages_to_compact],
+        [to_summary_message(message) for message in messages_to_compact],
         human_prefix="用户",
         ai_prefix="助手",
     )

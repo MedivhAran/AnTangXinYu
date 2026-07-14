@@ -40,6 +40,13 @@ describe('NDJSON chat stream', () => {
         type: 'message_completed',
         input_tokens: 10,
         output_tokens: 4,
+        sources: [
+          {
+            source_id: 'S1',
+            title: '低血糖资料',
+            url: 'https://example.com/hypoglycemia',
+          },
+        ],
       }) +
       '\n';
     const bytes = encode(body);
@@ -64,7 +71,18 @@ describe('NDJSON chat stream', () => {
       },
       { type: 'text_delta', delta: '低血糖' },
       { type: 'agent_activity', phase: 'searching' },
-      { type: 'message_completed', inputTokens: 10, outputTokens: 4 },
+      {
+        type: 'message_completed',
+        inputTokens: 10,
+        outputTokens: 4,
+        sources: [
+          {
+            sourceId: 'S1',
+            title: '低血糖资料',
+            url: 'https://example.com/hypoglycemia',
+          },
+        ],
+      },
     ]);
   });
 
@@ -109,6 +127,39 @@ describe('NDJSON chat stream', () => {
         () => {},
       ),
     ).rejects.toThrow('user_message_id 必须是非空字符串');
+  });
+
+  test.each([
+    [
+      '非 HTTP 来源',
+      { source_id: 'S1', title: '本地文件', url: 'file:///etc/passwd' },
+      'sources[0].url 只允许 HTTP 或 HTTPS',
+    ],
+    [
+      '错误的来源编号',
+      { source_id: 'source-1', title: '网页', url: 'https://example.com' },
+      'sources[0].source_id 必须是 S 加正整数',
+    ],
+  ])('rejects %s in a completed event', async (_, source, message) => {
+    const body =
+      JSON.stringify({
+        type: 'message_started',
+        user_message_id: userMessageId,
+        assistant_message_id: assistantMessageId,
+        run_id: runId,
+      }) +
+      '\n' +
+      JSON.stringify({
+        type: 'message_completed',
+        input_tokens: 10,
+        output_tokens: 4,
+        sources: [source],
+      }) +
+      '\n';
+
+    await expect(
+      consumeChatStream(byteStream([encode(body)]), () => {}),
+    ).rejects.toThrow(message);
   });
 
   test('rejects a stream that closes before a terminal event', async () => {

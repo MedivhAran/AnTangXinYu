@@ -79,6 +79,7 @@ async def test_message_and_agent_run_lifecycle(db_session: AsyncSession) -> None
     assert saved_message is not None
     assert saved_message.status == MessageStatus.COMPLETED
     assert saved_message.content == "我在这里。我们可以一起看看是什么让你担心。"
+    assert saved_message.sources == []
 
 
 async def test_deleting_user_cascades_chat_data(db_session: AsyncSession) -> None:

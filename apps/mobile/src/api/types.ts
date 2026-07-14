@@ -17,12 +17,19 @@ export type AuthResult = {
 export type MessageRole = 'user' | 'assistant';
 export type MessageStatus = 'generating' | 'completed' | 'failed' | 'cancelled';
 
+export type ChatSource = {
+  sourceId: string;
+  title: string;
+  url: string;
+};
+
 export type ChatMessage = {
   id: string;
   clientMessageId: string | null;
   role: MessageRole;
   status: MessageStatus;
   content: string;
+  sources: ChatSource[];
   createdAt: string;
   completedAt: string | null;
 };
@@ -59,6 +66,7 @@ export type MessageCompletedEvent = {
   type: 'message_completed';
   inputTokens: number;
   outputTokens: number;
+  sources: ChatSource[];
 };
 
 export type MessageFailedEvent = {
@@ -112,6 +120,41 @@ function dateValue(value: unknown, name: string): string {
   return result;
 }
 
+function httpUrlValue(value: unknown, name: string): string {
+  const result = stringValue(value, name);
+  let parsed: URL;
+  try {
+    parsed = new URL(result);
+  } catch {
+    throw new Error(`${name} 必须是有效 URL`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`${name} 只允许 HTTP 或 HTTPS`);
+  }
+  return result;
+}
+
+function parseSources(value: unknown, name: string): ChatSource[] {
+  if (!Array.isArray(value)) throw new Error(`${name} 必须是数组`);
+
+  const knownIds = new Set<string>();
+  return value.map((source, index) => {
+    const data = objectValue(source, `${name}[${index}]`);
+    const sourceId = stringValue(data.source_id, `${name}[${index}].source_id`);
+    if (!/^S[1-9]\d*$/.test(sourceId)) {
+      throw new Error(`${name}[${index}].source_id 必须是 S 加正整数`);
+    }
+    if (knownIds.has(sourceId)) throw new Error(`${name} 包含重复的 ${sourceId}`);
+    knownIds.add(sourceId);
+
+    return {
+      sourceId,
+      title: stringValue(data.title, `${name}[${index}].title`),
+      url: httpUrlValue(data.url, `${name}[${index}].url`),
+    };
+  });
+}
+
 export function parseUser(value: unknown): User {
   const data = objectValue(value, 'user');
   return {
@@ -161,6 +204,7 @@ function parseMessage(value: unknown): ChatMessage {
     role,
     status: status as MessageStatus,
     content: data.content,
+    sources: parseSources(data.sources, 'message.sources'),
     createdAt: dateValue(data.created_at, 'message.created_at'),
     completedAt:
       data.completed_at === null
@@ -215,6 +259,7 @@ export function parseChatStreamEvent(value: unknown): ChatStreamEvent {
         type,
         inputTokens: integerValue(data.input_tokens, 'input_tokens'),
         outputTokens: integerValue(data.output_tokens, 'output_tokens'),
+        sources: parseSources(data.sources, 'sources'),
       };
     case 'message_failed': {
       const code = stringValue(data.code, 'code');

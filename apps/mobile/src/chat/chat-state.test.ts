@@ -43,7 +43,18 @@ describe('chatReducer', () => {
     expect(state.activity).toBe('organizing');
     state = chatReducer(state, {
       type: 'stream-event',
-      event: { type: 'message_completed', inputTokens: 20, outputTokens: 5 },
+      event: {
+        type: 'message_completed',
+        inputTokens: 20,
+        outputTokens: 5,
+        sources: [
+          {
+            sourceId: 'S1',
+            title: '低血糖资料',
+            url: 'https://example.com/hypoglycemia',
+          },
+        ],
+      },
     });
 
     expect(state.messages[0].id).toBe(userId);
@@ -51,6 +62,13 @@ describe('chatReducer', () => {
       id: assistantId,
       content: '我在这里。',
       status: 'completed',
+      sources: [
+        {
+          sourceId: 'S1',
+          title: '低血糖资料',
+          url: 'https://example.com/hypoglycemia',
+        },
+      ],
     });
     expect(state.sending).toBe(false);
     expect(state.pendingClientMessageId).toBeNull();
@@ -80,6 +98,12 @@ describe('chatReducer', () => {
     expect(state.activity).toBeNull();
   });
 
+  test('new optimistic messages start without sources', () => {
+    const state = startedState();
+
+    expect(state.messages.map((message) => message.sources)).toEqual([[], []]);
+  });
+
   test('history with a generating assistant disables sending', () => {
     const generating: ChatMessage = {
       id: assistantId,
@@ -87,6 +111,7 @@ describe('chatReducer', () => {
       role: 'assistant',
       status: 'generating',
       content: '部分内容',
+      sources: [],
       createdAt: '2026-07-13T10:00:00.000Z',
       completedAt: null,
     };

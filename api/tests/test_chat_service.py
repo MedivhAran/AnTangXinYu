@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -27,7 +28,15 @@ from antang_api.chat import (
 )
 from antang_api.context.builder import ChatContext
 from antang_api.context.preparation import PreparedChatContext
-from antang_api.models import AgentRun, AgentRunStatus, Message, MessageStatus, User
+from antang_api.models import (
+    AgentRun,
+    AgentRunStatus,
+    AgentToolCall,
+    AgentToolCallStatus,
+    Message,
+    MessageStatus,
+    User,
+)
 from antang_api.schemas.chat import (
     AgentActivityEvent,
     MessageCompletedEvent,
@@ -228,6 +237,57 @@ def tool_values_event(content: str, preamble: str = "") -> dict[str, Any]:
     }
 
 
+def fetch_values_event(content: str) -> dict[str, Any]:
+    tool_call_message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "web_fetch",
+                "args": {"url": "https://example.com/source", "query": "结论"},
+                "id": "fetch-call",
+                "type": "tool_call",
+            }
+        ],
+        usage_metadata={
+            "input_tokens": 20,
+            "output_tokens": 4,
+            "total_tokens": 24,
+        },
+    )
+    tool_result = ToolMessage(
+        content=json.dumps(
+            {
+                "source_id": "S1",
+                "title": "资料页",
+                "url": "https://example.com/source",
+                "content": "资料正文",
+            },
+            ensure_ascii=False,
+        ),
+        tool_call_id="fetch-call",
+        name="web_fetch",
+    )
+    final_message = AIMessage(
+        content=content,
+        usage_metadata={
+            "input_tokens": 30,
+            "output_tokens": 6,
+            "total_tokens": 36,
+        },
+    )
+    return {
+        "type": "values",
+        "data": {
+            "messages": [
+                HumanMessage(content="你好"),
+                tool_call_message,
+                tool_result,
+                final_message,
+            ],
+        },
+    }
+
+
 async def test_prepare_chat_run_rejects_duplicate_and_active_run(
     db_session: AsyncSession,
 ) -> None:
@@ -282,7 +342,9 @@ def test_extract_agent_result_requires_complete_usage() -> None:
         input_message_count=1,
     )
 
-    assert result == ("中间消息\n\n最终回答", 22, 6)
+    assert result[0] == "中间消息\n\n最终回答"
+    assert [turn.content for turn in result[1]] == ["中间消息", "最终回答"]
+    assert result[2:] == (22, 6)
 
     with pytest.raises(RuntimeError, match="usage_metadata"):
         extract_agent_result(
@@ -378,6 +440,170 @@ async def test_stream_chat_run_completes_and_persists_result(
     assert run.status == AgentRunStatus.COMPLETED
     assert run.input_tokens == 21
     assert run.output_tokens == 3
+
+
+async def test_stream_chat_run_validates_and_persists_cited_sources(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await create_user(db_session, "stream_sources")
+    prepared_run = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "帮我查资料",
+    )
+    db_session.add_all(
+        [
+            AgentToolCall(
+                agent_run_id=prepared_run.run_id,
+                tool_call_id="search-call",
+                tool_name="web_search",
+                model_turn_index=1,
+                tool_call_index=1,
+                arguments={"query": "测试资料"},
+                result=json.dumps(
+                    {
+                        "results": [
+                            {
+                                "title": "资料页",
+                                "url": "https://example.com/source",
+                                "snippet": "摘要",
+                                "score": 0.95,
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                status=AgentToolCallStatus.COMPLETED,
+            ),
+            AgentToolCall(
+                agent_run_id=prepared_run.run_id,
+                tool_call_id="fetch-call",
+                tool_name="web_fetch",
+                model_turn_index=2,
+                tool_call_index=1,
+                arguments={"url": "https://example.com/source", "query": "结论"},
+                result=json.dumps(
+                    {
+                        "source_id": "S1",
+                        "title": "资料页",
+                        "url": "https://example.com/source",
+                        "content": "资料正文",
+                    },
+                    ensure_ascii=False,
+                ),
+                status=AgentToolCallStatus.COMPLETED,
+            ),
+        ]
+    )
+    await db_session.commit()
+    monkeypatch.setattr(
+        chat,
+        "prepare_chat_context",
+        AsyncMock(return_value=prepared_context("帮我查资料")),
+    )
+    answer = "这个结论来自刚才读取的网页。[S1]"
+    fake_agent = FakeAgent([message_event(answer), fetch_values_event(answer)])
+
+    events = [
+        event
+        async for event in stream_chat_run(
+            session=db_session,
+            model=cast("ChatAnthropic", object()),
+            agent=cast("CoreAgentGraph", fake_agent),
+            tools=(),
+            user_id=user.id,
+            prepared_run=prepared_run,
+        )
+    ]
+
+    completed = cast("MessageCompletedEvent", events[-1])
+    assert [source.model_dump() for source in completed.sources] == [
+        {
+            "source_id": "S1",
+            "title": "资料页",
+            "url": "https://example.com/source",
+        }
+    ]
+    db_session.expire_all()
+    message = await db_session.get(Message, prepared_run.assistant_message_id)
+    run = await db_session.get(AgentRun, prepared_run.run_id)
+    assert message is not None
+    assert message.sources == [
+        {
+            "source_id": "S1",
+            "title": "资料页",
+            "url": "https://example.com/source",
+        }
+    ]
+    assert message.status == MessageStatus.COMPLETED
+    assert run is not None
+    assert run.status == AgentRunStatus.COMPLETED
+
+
+async def test_stream_chat_run_rejects_uncited_fetch_and_keeps_sources_empty(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await create_user(db_session, "stream_uncited")
+    prepared_run = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "读取网页",
+    )
+    db_session.add(
+        AgentToolCall(
+            agent_run_id=prepared_run.run_id,
+            tool_call_id="fetch-call",
+            tool_name="web_fetch",
+            model_turn_index=1,
+            tool_call_index=1,
+            arguments={"url": "https://example.com/source", "query": "结论"},
+            result=json.dumps(
+                {
+                    "source_id": "S1",
+                    "title": "资料页",
+                    "url": "https://example.com/source",
+                    "content": "资料正文",
+                },
+                ensure_ascii=False,
+            ),
+            status=AgentToolCallStatus.COMPLETED,
+        )
+    )
+    await db_session.commit()
+    monkeypatch.setattr(
+        chat,
+        "prepare_chat_context",
+        AsyncMock(return_value=prepared_context("读取网页")),
+    )
+    answer = "这段回答忘记引用来源。"
+    fake_agent = FakeAgent([message_event(answer), fetch_values_event(answer)])
+
+    events = [
+        event
+        async for event in stream_chat_run(
+            session=db_session,
+            model=cast("ChatAnthropic", object()),
+            agent=cast("CoreAgentGraph", fake_agent),
+            tools=(),
+            user_id=user.id,
+            prepared_run=prepared_run,
+        )
+    ]
+
+    assert events[-1].type == "message_failed"
+    db_session.expire_all()
+    message = await db_session.get(Message, prepared_run.assistant_message_id)
+    run = await db_session.get(AgentRun, prepared_run.run_id)
+    assert message is not None
+    assert message.status == MessageStatus.FAILED
+    assert message.sources == []
+    assert run is not None
+    assert run.status == AgentRunStatus.FAILED
+    assert run.error_type == "CitationValidationError"
 
 
 async def test_stream_chat_run_streams_tool_preamble_and_activity(
@@ -530,6 +756,17 @@ async def test_stream_chat_run_marks_mismatched_output_failed_without_logging_er
         AsyncMock(return_value=prepared_context()),
     )
     fake_agent = FakeAgent([message_event("部分文字"), values_event("不同的最终文字")])
+    running_tool = AgentToolCall(
+        agent_run_id=prepared_run.run_id,
+        tool_call_id="running-before-failure",
+        tool_name="web_search",
+        model_turn_index=1,
+        tool_call_index=1,
+        arguments={"query": "测试"},
+        status=AgentToolCallStatus.RUNNING,
+    )
+    db_session.add(running_tool)
+    await db_session.commit()
     captured_logs: list[str] = []
     sink_id = logger.add(
         captured_logs.append,
@@ -562,6 +799,10 @@ async def test_stream_chat_run_marks_mismatched_output_failed_without_logging_er
     assert run is not None
     assert run.status == AgentRunStatus.FAILED
     assert run.error_type == "RuntimeError"
+    await db_session.refresh(running_tool)
+    assert running_tool.status == AgentToolCallStatus.FAILED
+    assert running_tool.error_type == "RuntimeError"
+    assert running_tool.finished_at is not None
 
     logs = "".join(captured_logs)
     assert "包含敏感正文的用户消息" not in logs
@@ -589,6 +830,17 @@ async def test_stream_chat_run_marks_client_cancellation(
         [message_event("已经生成")],
         error=asyncio.CancelledError(),
     )
+    running_tool = AgentToolCall(
+        agent_run_id=prepared_run.run_id,
+        tool_call_id="running-before-cancel",
+        tool_name="web_search",
+        model_turn_index=1,
+        tool_call_index=1,
+        arguments={"query": "测试"},
+        status=AgentToolCallStatus.RUNNING,
+    )
+    db_session.add(running_tool)
+    await db_session.commit()
 
     with pytest.raises(asyncio.CancelledError):
         _ = [
@@ -610,6 +862,10 @@ async def test_stream_chat_run_marks_client_cancellation(
     assert message.content == "已经生成"
     assert run is not None
     assert run.status == AgentRunStatus.CANCELLED
+    await db_session.refresh(running_tool)
+    assert running_tool.status == AgentToolCallStatus.CANCELLED
+    assert running_tool.error_type == "CancelledError"
+    assert running_tool.finished_at is not None
 
 
 async def test_stream_chat_run_marks_closed_generator_cancelled(

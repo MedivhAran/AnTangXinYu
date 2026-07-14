@@ -3,6 +3,14 @@ from typing import Literal, TypedDict
 from uuid import UUID
 
 
+class ToolResponseError(RuntimeError):
+    """供应商已经响应，但返回内容无法交给模型使用。"""
+
+    def __init__(self, message: str, *, artifact: object | None = None) -> None:
+        super().__init__(message)
+        self.artifact = artifact
+
+
 @dataclass(frozen=True, slots=True)
 class CoreAgentContext:
     """只在一次 Core Agent 运行中有效的应用上下文。"""

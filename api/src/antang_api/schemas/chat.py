@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 from antang_api.models import MessageRole, MessageStatus
 
@@ -46,12 +47,42 @@ class AgentActivityEvent(BaseModel):
     phase: Literal["thinking", "searching", "reading", "organizing"]
 
 
+class ChatSource(BaseModel):
+    """一条助手消息实际引用的网页。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_id: Annotated[str, StringConstraints(pattern=r"^S[1-9]\d*$")]
+    title: str
+    url: str
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("来源标题必须是非空且已规范化的文字")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            value != value.strip()
+            or parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+        ):
+            raise ValueError("来源 URL 必须是已规范化的 http(s) URL")
+        return value
+
+
 class MessageCompletedEvent(BaseModel):
     """事件：回答已经完整生成并保存。"""
 
     type: Literal["message_completed"] = "message_completed"
     input_tokens: int
     output_tokens: int
+    sources: list[ChatSource]
 
 
 class MessageFailedEvent(BaseModel):
@@ -94,6 +125,7 @@ class ChatMessageResponse(BaseModel):
     role: MessageRole
     status: MessageStatus
     content: str
+    sources: list[ChatSource]
     created_at: datetime
     completed_at: datetime | None
 

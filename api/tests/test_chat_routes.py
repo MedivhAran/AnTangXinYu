@@ -138,6 +138,7 @@ async def test_send_message_streams_ndjson_and_saves_answer(
     assert events[1]["phase"] == "thinking"
     assert events[2]["delta"] == "我在这里。"
     assert events[3]["input_tokens"] == 20
+    assert events[3]["sources"] == []
 
     history = await client.get(
         "/api/v1/chat/messages",
@@ -150,6 +151,7 @@ async def test_send_message_streams_ndjson_and_saves_answer(
         "我在这里。",
     ]
     assert all(UUID(message["id"]) for message in messages)
+    assert all(message["sources"] == [] for message in messages)
 
     saved_answer = await db_session.get(
         Message, UUID(events[0]["assistant_message_id"])
@@ -206,21 +208,33 @@ async def test_message_history_uses_before_cursor_and_includes_all_statuses(
     user_id = UUID(auth["user"]["id"])
     now = datetime.now(timezone.utc)
     message_specs = [
-        (MessageRole.USER, MessageStatus.COMPLETED, "一"),
-        (MessageRole.ASSISTANT, MessageStatus.GENERATING, "二"),
-        (MessageRole.ASSISTANT, MessageStatus.COMPLETED, "三"),
-        (MessageRole.ASSISTANT, MessageStatus.FAILED, "四"),
-        (MessageRole.ASSISTANT, MessageStatus.CANCELLED, "五"),
+        (MessageRole.USER, MessageStatus.COMPLETED, "一", []),
+        (MessageRole.ASSISTANT, MessageStatus.GENERATING, "二", []),
+        (
+            MessageRole.ASSISTANT,
+            MessageStatus.COMPLETED,
+            "三[S1]",
+            [
+                {
+                    "source_id": "S1",
+                    "title": "来源",
+                    "url": "https://example.com/source",
+                }
+            ],
+        ),
+        (MessageRole.ASSISTANT, MessageStatus.FAILED, "四", []),
+        (MessageRole.ASSISTANT, MessageStatus.CANCELLED, "五", []),
     ]
     saved_messages: list[Message] = []
 
-    for role, message_status, content in message_specs:
+    for role, message_status, content, sources in message_specs:
         message = Message(
             client_message_id=uuid4() if role == MessageRole.USER else None,
             user_id=user_id,
             role=role,
             status=message_status,
             content=content,
+            sources=sources,
             completed_at=(None if message_status == MessageStatus.GENERATING else now),
         )
         db_session.add(message)
@@ -249,7 +263,14 @@ async def test_message_history_uses_before_cursor_and_includes_all_statuses(
     second_body = second_page.json()
     assert [message["content"] for message in second_body["messages"]] == [
         "二",
-        "三",
+        "三[S1]",
+    ]
+    assert second_body["messages"][1]["sources"] == [
+        {
+            "source_id": "S1",
+            "title": "来源",
+            "url": "https://example.com/source",
+        }
     ]
 
     third_page = await client.get(

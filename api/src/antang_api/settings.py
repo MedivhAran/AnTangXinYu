@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     deepseek_anthropic_base_url: str = "https://api.deepseek.com/anthropic"
     deepseek_max_output_tokens: int = Field(default=4096, gt=0)
     tavily_api_key: SecretStr = Field(min_length=1)
+    # Tavily 没有承诺最终字符串的总上限；以下是项目自己的初始安全边界。
+    tavily_search_max_snippet_chars: int = Field(default=2_000, gt=0)
+    tavily_fetch_max_content_chars: int = Field(default=10_000, gt=0)
 
     database_url: str = Field(pattern=r"^postgresql\+psycopg://")
     jwt_secret: SecretStr = Field(min_length=32)

@@ -5,15 +5,27 @@ from typing import Any, Self, cast
 from uuid import UUID, uuid4
 
 import pytest
-from langchain.agents.middleware.types import ToolCallRequest
+from langchain.agents.middleware import AgentState
+from langchain.agents.middleware.types import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallRequest,
+)
 from langchain.tools import ToolRuntime
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolCall
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    BaseMessage,
+    HumanMessage,
+    ToolCall,
+)
 from langchain_core.messages.tool import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt.tool_node import ToolInvocationError
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
@@ -24,7 +36,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from antang_api.agents.core import build_core_agent
-from antang_api.agents.runtime import CoreAgentContext
+from antang_api.agents.runtime import CoreAgentContext, ToolResponseError
 from antang_api.agents.tool_middleware import (
     ToolExecutionError,
     ToolExecutionLimitError,
@@ -72,6 +84,11 @@ class ToolLoopFakeModel(FakeMessagesListChatModel):
 @tool("web_search", description="返回合成搜索结果。")
 async def fake_web_search(query: str) -> dict[str, str]:
     return {"query": query}
+
+
+@tool("web_fetch", description="返回合成网页内容。")
+async def fake_web_fetch(url: str, query: str) -> dict[str, str]:
+    return {"url": url, "query": query}
 
 
 def make_session_factory(
@@ -161,6 +178,90 @@ async def load_only_tool_call(
     return records[0]
 
 
+def completed_tool_rounds(count: int) -> list[AnyMessage]:
+    messages: list[AnyMessage] = [HumanMessage(content="测试工具轮次")]
+    for index in range(1, count + 1):
+        call_id = f"completed-{index}"
+        messages.extend(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "web_fetch",
+                            "args": {
+                                "url": "https://example.com",
+                                "query": "测试",
+                            },
+                            "id": call_id,
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                ToolMessage(
+                    content="合成结果",
+                    tool_call_id=call_id,
+                    name="web_fetch",
+                ),
+            ]
+        )
+    return messages
+
+
+@pytest.mark.parametrize(
+    ("completed_round_count", "expected_tools", "expected_tool_choice"),
+    [
+        (0, ["web_search", "web_fetch"], None),
+        (1, ["web_search", "web_fetch"], None),
+        (2, ["web_fetch"], None),
+        (3, ["web_search", "web_fetch"], {"type": "none"}),
+    ],
+)
+async def test_model_only_sees_tools_valid_for_remaining_rounds(
+    db_session: AsyncSession,
+    completed_round_count: int,
+    expected_tools: list[str],
+    expected_tool_choice: object,
+) -> None:
+    messages = completed_tool_rounds(completed_round_count)
+    middleware = ToolPersistenceMiddleware(
+        make_session_factory(db_session),
+        max_tool_rounds=3,
+        max_parallel_tool_calls=5,
+    )
+    context = CoreAgentContext(
+        user_id=uuid4(),
+        run_id=uuid4(),
+        input_message_count=1,
+    )
+    runtime: Runtime[CoreAgentContext | None] = Runtime(context=context)
+    request: ModelRequest[CoreAgentContext | None] = ModelRequest(
+        model=ToolLoopFakeModel(responses=[AIMessage(content="完成")]),
+        messages=messages,
+        tools=[fake_web_search, fake_web_fetch],
+        state=cast("AgentState[Any]", {"messages": messages}),
+        runtime=runtime,
+    )
+    visible_tools: list[str] = []
+    visible_tool_choice: object = None
+
+    async def handler(
+        modified_request: ModelRequest[CoreAgentContext | None],
+    ) -> ModelResponse[Any]:
+        nonlocal visible_tool_choice
+        visible_tools.extend(
+            tool["name"] if isinstance(tool, dict) else tool.name
+            for tool in modified_request.tools
+        )
+        visible_tool_choice = modified_request.tool_choice
+        return ModelResponse(result=[AIMessage(content="完成")])
+
+    await middleware.awrap_model_call(request, handler)
+
+    assert visible_tools == expected_tools
+    assert visible_tool_choice == expected_tool_choice
+
+
 async def test_tool_success_uses_short_transactions_and_keeps_parallel_order(
     db_session: AsyncSession,
 ) -> None:
@@ -211,7 +312,9 @@ async def test_tool_success_uses_short_transactions_and_keeps_parallel_order(
     assert record.tool_call_index == 2
     assert record.arguments == {"query": "第二条"}
     assert record.result == result_blocks
+    assert record.provider_metadata is None
     assert record.finished_at is not None
+    assert record.finished_at >= record.started_at
     assert activities == [
         {
             "event": "tool_activity",
@@ -226,6 +329,97 @@ async def test_tool_success_uses_short_transactions_and_keeps_parallel_order(
             "status": "completed",
         },
     ]
+
+
+async def test_tool_artifact_metadata_is_saved_separately_from_model_content(
+    db_session: AsyncSession,
+) -> None:
+    user, prepared_run = await make_running_run(db_session, "tool_metadata")
+    call = tool_call("call-metadata", "元数据")
+    middleware = ToolPersistenceMiddleware(
+        make_session_factory(db_session),
+        max_tool_rounds=3,
+        max_parallel_tool_calls=5,
+    )
+    request = make_request(
+        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        messages=[
+            HumanMessage(content="测试"),
+            AIMessage(content="", tool_calls=[call]),
+        ],
+        tool_call=call,
+    )
+    model_content = '{"results":[{"title":"标题"}]}'
+    provider_metadata = {
+        "request_id": "request-123",
+        "response_time": 0.42,
+        "usage": {"credits": 2},
+    }
+
+    async def handler(_request: ToolCallRequest) -> ToolMessage | Command[Any]:
+        return ToolMessage(
+            content=model_content,
+            artifact={"provider_metadata": provider_metadata},
+            tool_call_id=call["id"],
+        )
+
+    result = await middleware.awrap_tool_call(request, handler)
+
+    assert isinstance(result, ToolMessage)
+    assert result.content == model_content
+    assert "request-123" not in result.text
+    db_session.expire_all()
+    record = await load_only_tool_call(db_session, prepared_run.run_id)
+    assert record.status == AgentToolCallStatus.COMPLETED
+    assert record.result == model_content
+    assert record.provider_metadata == provider_metadata
+
+
+async def test_invalid_tool_artifact_fails_once_and_is_not_persisted(
+    db_session: AsyncSession,
+) -> None:
+    user, prepared_run = await make_running_run(db_session, "tool_bad_metadata")
+    call = tool_call("call-bad-metadata", "坏元数据")
+    middleware = ToolPersistenceMiddleware(
+        make_session_factory(db_session),
+        max_tool_rounds=3,
+        max_parallel_tool_calls=5,
+    )
+    request = make_request(
+        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        messages=[
+            HumanMessage(content="测试"),
+            AIMessage(content="", tool_calls=[call]),
+        ],
+        tool_call=call,
+    )
+    handler_calls = 0
+
+    async def handler(_request: ToolCallRequest) -> ToolMessage | Command[Any]:
+        nonlocal handler_calls
+        handler_calls += 1
+        return ToolMessage(
+            content="模型可见结果",
+            artifact={
+                "provider_metadata": {
+                    "request_id": "request-123",
+                    "response_time": 0.42,
+                    "usage": {},
+                }
+            },
+            tool_call_id=call["id"],
+        )
+
+    with pytest.raises(ToolExecutionError, match="usage"):
+        await middleware.awrap_tool_call(request, handler)
+
+    assert handler_calls == 1
+    db_session.expire_all()
+    record = await load_only_tool_call(db_session, prepared_run.run_id)
+    assert record.status == AgentToolCallStatus.FAILED
+    assert record.result is None
+    assert record.provider_metadata is None
+    assert record.error_type == "ToolExecutionError"
 
 
 async def test_create_agent_streams_real_tool_middleware_lifecycle(
@@ -261,9 +455,7 @@ async def test_create_agent_streams_real_tool_middleware_lifecycle(
         tools=(fake_web_search,),
         middleware=(middleware,),
     )
-    config: RunnableConfig = {
-        "configurable": {"thread_id": str(prepared_run.run_id)}
-    }
+    config: RunnableConfig = {"configurable": {"thread_id": str(prepared_run.run_id)}}
     context = CoreAgentContext(
         user_id=user.id,
         run_id=prepared_run.run_id,
@@ -325,10 +517,52 @@ async def test_tool_exception_is_saved_and_propagated(
     assert record.error_type == "ValueError"
     assert record.error_message == "provider failed"
     assert record.result is None
-    assert [activity["status"] for activity in cast(list[dict[str, Any]], activities)] == [
+    assert [
+        activity["status"] for activity in cast(list[dict[str, Any]], activities)
+    ] == [
         "started",
         "failed",
     ]
+
+
+async def test_failed_provider_response_keeps_audit_metadata(
+    db_session: AsyncSession,
+) -> None:
+    user, prepared_run = await make_running_run(db_session, "tool_response")
+    call = tool_call("call-response-failure", "失败响应")
+    middleware = ToolPersistenceMiddleware(
+        make_session_factory(db_session),
+        max_tool_rounds=3,
+        max_parallel_tool_calls=5,
+    )
+    request = make_request(
+        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        messages=[
+            HumanMessage(content="测试"),
+            AIMessage(content="", tool_calls=[call]),
+        ],
+        tool_call=call,
+    )
+    provider_metadata = {
+        "request_id": "failed-request-123",
+        "response_time": 0.52,
+        "usage": {"credits": 2},
+    }
+
+    async def handler(_request: ToolCallRequest) -> ToolMessage | Command[Any]:
+        raise ToolResponseError(
+            "供应商内容结构无效",
+            artifact={"provider_metadata": provider_metadata},
+        )
+
+    with pytest.raises(ToolResponseError, match="结构无效"):
+        await middleware.awrap_tool_call(request, handler)
+
+    db_session.expire_all()
+    record = await load_only_tool_call(db_session, prepared_run.run_id)
+    assert record.status == AgentToolCallStatus.FAILED
+    assert record.provider_metadata == provider_metadata
+    assert record.error_type == "ToolResponseError"
 
 
 async def test_error_tool_message_is_saved_then_fails_the_run(
@@ -441,6 +675,44 @@ async def test_cancelled_tool_is_saved_and_cancellation_propagates(
     record = await load_only_tool_call(db_session, prepared_run.run_id)
     assert record.status == AgentToolCallStatus.CANCELLED
     assert record.error_type == "CancelledError"
+
+
+async def test_last_tool_round_rejects_new_search_before_provider_call(
+    db_session: AsyncSession,
+) -> None:
+    user, prepared_run = await make_running_run(db_session, "last_round_search")
+    call = tool_call("call-last-round-search", "不应执行")
+    messages = [*completed_tool_rounds(2), AIMessage(content="", tool_calls=[call])]
+    middleware = ToolPersistenceMiddleware(
+        make_session_factory(db_session),
+        max_tool_rounds=3,
+        max_parallel_tool_calls=5,
+    )
+    activities: list[object] = []
+    request = make_request(
+        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        messages=messages,
+        tool_call=call,
+        activities=activities,
+    )
+    handler_called = False
+
+    async def handler(_request: ToolCallRequest) -> ToolMessage | Command[Any]:
+        nonlocal handler_called
+        handler_called = True
+        return ToolMessage(content="不应执行", tool_call_id=call["id"])
+
+    with pytest.raises(ToolExecutionLimitError, match="最后一轮"):
+        await middleware.awrap_tool_call(request, handler)
+
+    assert handler_called is False
+    db_session.expire_all()
+    record = await load_only_tool_call(db_session, prepared_run.run_id)
+    assert record.status == AgentToolCallStatus.FAILED
+    assert record.error_type == "ToolExecutionLimitError"
+    assert [
+        activity["status"] for activity in cast(list[dict[str, Any]], activities)
+    ] == ["started", "failed"]
 
 
 @pytest.mark.parametrize(

@@ -9,17 +9,22 @@ from uuid import UUID
 from anyio import CancelScope
 from langchain.agents.middleware import InputAgentState
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from loguru import logger
 from psycopg.errors import UniqueViolation
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from antang_api.agents.core import CoreAgentGraph, SYSTEM_PROMPT
 from antang_api.agents.runtime import CoreAgentContext, ToolActivity
+from antang_api.citations import (
+    VISIBLE_TURN_SEPARATOR,
+    VisibleCitationTurn,
+    load_and_validate_citations,
+)
 from antang_api.context import prepare_chat_context
 from antang_api.models import (
     AgentRun,
@@ -33,6 +38,7 @@ from antang_api.models import (
 from antang_api.schemas.chat import (
     AgentActivityEvent,
     ChatStreamEvent,
+    ChatSource,
     MessageCompletedEvent,
     MessageFailedEvent,
     MessageStartedEvent,
@@ -55,7 +61,6 @@ ActivityPhase: TypeAlias = Literal[
     "reading",
     "organizing",
 ]
-VISIBLE_TURN_SEPARATOR = "\n\n"
 TOOL_ACTIVITY_PHASES: dict[str, ActivityPhase] = {
     "web_search": "searching",
     "web_fetch": "reading",
@@ -148,10 +153,14 @@ async def _load_running_chat_run(
         raise RuntimeError(f"找不到 AgentRun：{prepared_run.run_id}")
 
     if assistant_message.status != MessageStatus.GENERATING:
-        raise RuntimeError(f"AI 消息状态应为 generating，实际为 {assistant_message.status.value}")
+        raise RuntimeError(
+            f"AI 消息状态应为 generating，实际为 {assistant_message.status.value}"
+        )
 
     if agent_run.status != AgentRunStatus.RUNNING:
-        raise RuntimeError(f"AgentRun 状态应为 running，实际为 {agent_run.status.value}")
+        raise RuntimeError(
+            f"AgentRun 状态应为 running，实际为 {agent_run.status.value}"
+        )
 
     return assistant_message, agent_run
 
@@ -159,7 +168,7 @@ async def _load_running_chat_run(
 def extract_agent_result(
     final_state: dict[str, Any],
     input_message_count: int,
-) -> tuple[str, int, int]:
+) -> tuple[str, tuple[VisibleCitationTurn, ...], int, int]:
     """从最终状态取得全部可见文字和真实 token 用量。"""
 
     messages = cast(list[BaseMessage], final_state["messages"])
@@ -171,13 +180,30 @@ def extract_agent_result(
     final_message = generated_messages[-1]
 
     if not isinstance(final_message, AIMessage):
-        raise RuntimeError(f"Core Agent 最后一条消息类型错误：{type(final_message).__name__}")
+        raise RuntimeError(
+            f"Core Agent 最后一条消息类型错误：{type(final_message).__name__}"
+        )
 
     if final_message.tool_calls:
         raise RuntimeError("Core Agent 结束时仍有未执行的工具调用")
 
-    visible_turns = [message.text for message in generated_messages if isinstance(message, AIMessage) and message.text]
-    content = VISIBLE_TURN_SEPARATOR.join(visible_turns)
+    if not final_message.text.strip():
+        raise RuntimeError("Core Agent 返回了空回答")
+
+    available_tool_call_ids: set[str] = set()
+    visible_turns: list[VisibleCitationTurn] = []
+    for message in generated_messages:
+        if isinstance(message, ToolMessage) and message.status != "error":
+            available_tool_call_ids.add(message.tool_call_id)
+        elif isinstance(message, AIMessage) and message.text:
+            visible_turns.append(
+                VisibleCitationTurn(
+                    content=message.text,
+                    available_tool_call_ids=frozenset(available_tool_call_ids),
+                )
+            )
+
+    content = VISIBLE_TURN_SEPARATOR.join(turn.content for turn in visible_turns)
 
     if not content.strip():
         raise RuntimeError("Core Agent 返回了空回答")
@@ -197,7 +223,7 @@ def extract_agent_result(
         input_tokens += usage["input_tokens"]
         output_tokens += usage["output_tokens"]
 
-    return content, input_tokens, output_tokens
+    return content, tuple(visible_turns), input_tokens, output_tokens
 
 
 def _has_thinking_content(chunk: AIMessageChunk) -> bool:
@@ -206,7 +232,10 @@ def _has_thinking_content(chunk: AIMessageChunk) -> bool:
     if not isinstance(chunk.content, list):
         return False
 
-    return any(isinstance(block, dict) and block.get("type") == "thinking" for block in chunk.content)
+    return any(
+        isinstance(block, dict) and block.get("type") == "thinking"
+        for block in chunk.content
+    )
 
 
 def _parse_tool_activity(value: object) -> ToolActivity:
@@ -235,6 +264,7 @@ async def _complete_chat_run(
     content: str,
     input_tokens: int,
     output_tokens: int,
+    sources: list[ChatSource],
 ) -> None:
     """保存完整回答，并将 AgentRun 标记为完成。"""
 
@@ -245,6 +275,7 @@ async def _complete_chat_run(
     now = datetime.now(timezone.utc)
 
     assistant_message.content = content
+    assistant_message.sources = [source.model_dump() for source in sources]
     assistant_message.status = MessageStatus.COMPLETED
     assistant_message.completed_at = now
 
@@ -272,6 +303,7 @@ async def _fail_chat_run(
     now = datetime.now(timezone.utc)
 
     assistant_message.content = partial_content
+    assistant_message.sources = []
     assistant_message.status = MessageStatus.FAILED
     assistant_message.completed_at = now
 
@@ -279,6 +311,20 @@ async def _fail_chat_run(
     agent_run.error_type = type(error).__name__
     agent_run.error_message = str(error)
     agent_run.finished_at = now
+
+    await session.execute(
+        update(AgentToolCall)
+        .where(
+            AgentToolCall.agent_run_id == prepared_run.run_id,
+            AgentToolCall.status == AgentToolCallStatus.RUNNING,
+        )
+        .values(
+            status=AgentToolCallStatus.FAILED,
+            error_type=type(error).__name__,
+            error_message=str(error),
+            finished_at=now,
+        )
+    )
 
     await session.commit()
 
@@ -298,11 +344,26 @@ async def _cancel_chat_run(
     now = datetime.now(timezone.utc)
 
     assistant_message.content = partial_content
+    assistant_message.sources = []
     assistant_message.status = MessageStatus.CANCELLED
     assistant_message.completed_at = now
 
     agent_run.status = AgentRunStatus.CANCELLED
     agent_run.finished_at = now
+
+    await session.execute(
+        update(AgentToolCall)
+        .where(
+            AgentToolCall.agent_run_id == prepared_run.run_id,
+            AgentToolCall.status == AgentToolCallStatus.RUNNING,
+        )
+        .values(
+            status=AgentToolCallStatus.CANCELLED,
+            error_type="CancelledError",
+            error_message="聊天运行被取消",
+            finished_at=now,
+        )
+    )
 
     await session.commit()
 
@@ -348,7 +409,9 @@ async def stream_chat_run(
             through_message_id=prepared_run.user_message_id,
             compaction_trigger_tokens=settings.context_compaction_trigger_tokens,
             recent_messages_to_keep=settings.context_recent_messages_to_keep,
-            tool_result_cleanup_trigger_tokens=(settings.context_tool_result_cleanup_trigger_tokens),
+            tool_result_cleanup_trigger_tokens=(
+                settings.context_tool_result_cleanup_trigger_tokens
+            ),
             recent_tool_results_to_keep=(settings.context_recent_tool_results_to_keep),
             tools=tools,
         )
@@ -406,7 +469,9 @@ async def stream_chat_run(
                     raise RuntimeError("模型流事件缺少 langgraph_step")
 
                 if _has_thinking_content(chunk):
-                    thinking_phase: ActivityPhase = "organizing" if has_completed_tool else "thinking"
+                    thinking_phase: ActivityPhase = (
+                        "organizing" if has_completed_tool else "thinking"
+                    )
                     if thinking_phase != current_activity:
                         current_activity = thinking_phase
                         yield AgentActivityEvent(phase=thinking_phase)
@@ -414,7 +479,10 @@ async def stream_chat_run(
                 delta = chunk.text
 
                 if delta:
-                    if last_text_model_step is not None and last_text_model_step != model_step:
+                    if (
+                        last_text_model_step is not None
+                        and last_text_model_step != model_step
+                    ):
                         streamed_parts.append(VISIBLE_TURN_SEPARATOR)
                         yield TextDeltaEvent(delta=VISIBLE_TURN_SEPARATOR)
 
@@ -465,7 +533,7 @@ async def stream_chat_run(
         if final_state is None:
             raise RuntimeError("LangGraph 没有返回最终状态")
 
-        content, input_tokens, output_tokens = extract_agent_result(
+        content, visible_turns, input_tokens, output_tokens = extract_agent_result(
             final_state,
             input_message_count,
         )
@@ -474,12 +542,20 @@ async def stream_chat_run(
         if streamed_content != content:
             raise RuntimeError("流式文字与最终回答内容不一致")
 
+        sources = await load_and_validate_citations(
+            session,
+            agent_run_id=prepared_run.run_id,
+            content=content,
+            visible_turns=visible_turns,
+        )
+
         await _complete_chat_run(
             session=session,
             prepared_run=prepared_run,
             content=content,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            sources=sources,
         )
         latency_ms = round((time.perf_counter() - started_at) * 1000)
         run_log.bind(
@@ -491,6 +567,7 @@ async def stream_chat_run(
         terminal_event = MessageCompletedEvent(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            sources=sources,
         )
     except (asyncio.CancelledError, GeneratorExit):
         # Starlette 取消流任务后，普通 await 也可能继续收到取消信号。
@@ -532,9 +609,17 @@ async def stream_chat_run(
 async def recover_interrupted_chat_runs(session: AsyncSession) -> None:
     """服务启动时把上次进程遗留的 Agent 和工具记录明确标记为失败。"""
 
-    runs = list(await session.scalars(select(AgentRun).where(AgentRun.status == AgentRunStatus.RUNNING)))
+    runs = list(
+        await session.scalars(
+            select(AgentRun).where(AgentRun.status == AgentRunStatus.RUNNING)
+        )
+    )
     tool_calls = list(
-        await session.scalars(select(AgentToolCall).where(AgentToolCall.status == AgentToolCallStatus.RUNNING))
+        await session.scalars(
+            select(AgentToolCall).where(
+                AgentToolCall.status == AgentToolCallStatus.RUNNING
+            )
+        )
     )
 
     if not runs and not tool_calls:

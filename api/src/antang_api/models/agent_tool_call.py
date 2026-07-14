@@ -68,6 +68,8 @@ class AgentToolCall(Base):
     tool_call_index: Mapped[int] = mapped_column(Integer)
     arguments: Mapped[dict[str, Any]] = mapped_column(JSONB)
     result: Mapped[str | list[str | dict[str, Any]] | None] = mapped_column(JSONB)
+    # 供应商请求编号、耗时和额度只用于后台审计，不会重新放进模型上下文。
+    provider_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     status: Mapped[AgentToolCallStatus] = mapped_column(
         SqlEnum(

@@ -13,6 +13,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from antang_api.database import Base
 
@@ -87,6 +88,13 @@ class Message(Base):
     )
 
     content: Mapped[str] = mapped_column(Text)
+
+    # 最终回答实际引用的网页快照。详细工具结果仍保存在 agent_tool_calls。
+    sources: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

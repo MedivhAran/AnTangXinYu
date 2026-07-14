@@ -18,6 +18,7 @@ import { ApiClient, ApiError, errorMessage } from '../api/client';
 import type { ChatMessage, User } from '../api/types';
 import { ActivityStatus } from './ActivityStatus';
 import { chatReducer, initialChatState } from './chat-state';
+import { MessageSources } from './MessageSources';
 
 type Props = {
   api: ApiClient;
@@ -165,7 +166,15 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
                 assistant ? styles.assistantBubble : styles.userBubble,
               ]}
             >
-              <Text style={styles.messageText}>{message.content || '无内容'}</Text>
+              <MessageSources
+                content={message.content || '无内容'}
+                onOpenError={(error) =>
+                  dispatch({ type: 'history-failed', message: error })
+                }
+                sources={
+                  assistant && message.status === 'completed' ? message.sources : []
+                }
+              />
               {message.status === 'failed' ? (
                 <Text style={styles.failedStatus}>回复失败</Text>
               ) : null}
@@ -355,7 +364,6 @@ const styles = StyleSheet.create({
   bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
   userBubble: { backgroundColor: '#BDEED8', borderBottomRightRadius: 5 },
   assistantBubble: { backgroundColor: '#FFFFFF', borderBottomLeftRadius: 5 },
-  messageText: { color: '#17211C', fontSize: 16, lineHeight: 23 },
   failedStatus: { marginTop: 6, color: '#A43B3B', fontSize: 12 },
   cancelledStatus: { marginTop: 6, color: '#79654B', fontSize: 12 },
   retryButton: { alignSelf: 'flex-start', marginTop: 7 },

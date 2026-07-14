@@ -37,7 +37,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 client_name="antang-api",
             ) as tavily_client:
                 chat_model = build_deepseek_model()
-                core_tools = build_web_tools(tavily_client)
+                core_tools = build_web_tools(
+                    tavily_client,
+                    search_max_snippet_chars=(settings.tavily_search_max_snippet_chars),
+                    fetch_max_content_chars=settings.tavily_fetch_max_content_chars,
+                )
                 tool_middleware = ToolPersistenceMiddleware(
                     session_factory,
                     max_tool_rounds=settings.agent_max_tool_rounds,

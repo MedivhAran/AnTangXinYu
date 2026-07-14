@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 from uuid import UUID
@@ -27,6 +28,11 @@ SUMMARY_PREFIX = """ [较早对话摘要]
 以下内容由系统根据更早的用户和你的聊天消息生成：
 """
 
+HISTORICAL_WEB_RESULT_NOTICE = (
+    "这是以前一次对话读取的网页，只用于理解上下文。"
+    "当前回答若要引用其中的事实，必须在本次运行中重新调用 web_fetch。"
+)
+
 
 @dataclass(frozen=True)
 class ChatContext:
@@ -48,6 +54,86 @@ def to_model_message(message: Message) -> BaseMessage:
             return AIMessage(content=message.content)
 
     raise ValueError(f"无法转换消息角色：{message.role}")
+
+
+def to_historical_model_message(message: Message) -> BaseMessage:
+    """把历史聊天交给模型，并移除只对原回答有效的来源编号。"""
+
+    model_message = to_model_message(message)
+    if message.role != MessageRole.ASSISTANT or not message.sources:
+        return model_message
+
+    content = message.content
+    for source in message.sources:
+        if not isinstance(source, dict):
+            raise RuntimeError("助手消息包含无效的来源快照")
+        source_id = source.get("source_id")
+        if not isinstance(source_id, str) or not source_id:
+            raise RuntimeError("助手消息包含无效的来源快照")
+        content = content.replace(f"[{source_id}]", "")
+
+    return model_message.model_copy(update={"content": content})
+
+
+def _tool_result_text(call: AgentToolCall) -> str:
+    """取得模型当时看到的 JSON 文本；数据库结构异常时立即失败。"""
+
+    result = call.result
+    if isinstance(result, str):
+        return result
+    if isinstance(result, list) and len(result) == 1:
+        block = result[0]
+        if isinstance(block, str):
+            return block
+        if (
+            isinstance(block, dict)
+            and set(block) == {"type", "text"}
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        ):
+            return block["text"]
+
+    raise RuntimeError(f"已完成的工具调用结果不是文本：{call.tool_call_id}")
+
+
+def _historical_tool_result(call: AgentToolCall) -> str:
+    """历史网页结果保留正文，但不把旧的 S1 编号带入新一轮。"""
+
+    result = _tool_result_text(call)
+    if call.tool_name != "web_fetch":
+        return result
+
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("历史 web_fetch 结果不是有效 JSON") from error
+
+    if not isinstance(parsed, dict) or set(parsed) != {
+        "source_id",
+        "title",
+        "url",
+        "content",
+    }:
+        raise RuntimeError("历史 web_fetch 结果结构无效")
+
+    title = parsed.get("title")
+    url = parsed.get("url")
+    content = parsed.get("content")
+    if not all(
+        isinstance(value, str) and value.strip() for value in (title, url, content)
+    ):
+        raise RuntimeError("历史 web_fetch 结果包含无效字段")
+
+    return json.dumps(
+        {
+            "historical_result": True,
+            "title": title,
+            "url": url,
+            "content": content,
+            "notice": HISTORICAL_WEB_RESULT_NOTICE,
+        },
+        ensure_ascii=False,
+    )
 
 
 async def _load_completed_tool_messages(
@@ -120,9 +206,10 @@ async def _load_completed_tool_messages(
                     raise RuntimeError(f"已完成的工具调用缺少结果：{call.tool_call_id}")
                 rebuilt_messages.append(
                     ToolMessage(
-                        content=call.result,
+                        content=_historical_tool_result(call),
                         tool_call_id=call.tool_call_id,
                         name=call.tool_name,
+                        additional_kwargs={"lc_source": "historical_tool_result"},
                     )
                 )
 
@@ -191,7 +278,7 @@ async def build_chat_context(
     for message in saved_messages:
         # 工具调用属于生成这条最终助手消息的 AgentRun，必须紧挨着放在它前面。
         model_messages.extend(tool_messages_by_result.get(message.id, ()))
-        model_messages.append(to_model_message(message))
+        model_messages.append(to_historical_model_message(message))
 
     return ChatContext(
         messages=tuple(model_messages),

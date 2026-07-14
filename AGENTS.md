@@ -74,6 +74,7 @@
 - 摘要边界落在完整对话之后，近期原文从用户消息开始。
 - 压缩完成后重新组装上下文并再次精确计数；上下文仍达到限制时直接报告错误。
 - 工具调用和模型实际看到的规范化结果保存在 `agent_tool_calls`。输入达到 `100000` tokens 时，模型上下文只保留最近 `3` 个真实工具结果，较早结果临时替换为占位符；数据库原文保持不变。工具结果清理先于对话压缩。
+- Tavily 的请求编号、响应耗时和额度单独保存在工具记录中，不进入模型上下文。联网回答的来源快照随助手消息保存，历史来源编号不会在新一轮继续生效。
 - 用户界面保持一个连续会话，服务器自动完成上下文压缩。
 
 ## Agent 设计
@@ -97,6 +98,7 @@
 - 客户端断开响应流时，后端取消本次运行，保存已经发送的部分文字，并将消息和 AgentRun 标记为 `cancelled`。
 - 历史接口保留并返回 `generating`、`completed`、`failed` 和 `cancelled` 状态；失败与取消消息的部分文字继续可见。
 - 首版 Docker 部署运行单个 API 进程。服务启动时将上次进程遗留的 `running` AgentRun 和对应 `generating` 消息明确标记为失败。
+- Core Agent 的最后一轮工具调用只允许读取已经找到的网页，不能重新搜索；工具轮数用完后通过 DeepSeek Anthropic 的 `tool_choice: none` 明确关闭工具。模型请求和工具实际执行两层都检查权限，违规调用保存失败并终止当前运行。
 
 ## 协作方式
 
@@ -139,7 +141,8 @@
 - Android 已经完成登录注册、SecureStore 凭证、一次 refresh、历史加载、NDJSON 流式聊天、失败取消状态、手动重试和 Agent 活动渐变状态栏。
 - Docker Compose 已经接入 PostgreSQL 与单进程 API，容器会先执行 Alembic 再启动服务。
 - Core Agent 已接入 Tavily `web_search` 和 `web_fetch`、工具执行审计、跨轮工具上下文、旧工具结果清理、工具循环硬上限和面向 App 的结构化活动事件。
-- 自动化检查和合成内容的真实 DeepSeek 端到端验证已经通过。下一步是在新 development build 上完成 Android 真机验收。
+- 联网来源已经随消息持久化，Android 可以显示正文来源标记和完整 URL 来源卡片。
+- 自动化检查已经通过；真实 DeepSeek、Tavily、PostgreSQL 评测暴露的模型工具顺序与网页长度问题记录在 `docs/research/web-search-evaluation.md`。下一步是在新 development build 上完成 Android 真机验收，并单独讨论是否把联网研究改为固定工作流。
 
 ## 待研究事项
 
@@ -158,3 +161,5 @@
 
 - `docs/research/sub-agent-candidates.md`：Sub-agent 候选的第一轮调研。
 - `docs/research/legacy-project-inventory.md`：旧项目产品功能、Agent 链路、基础设施和问题盘点。
+- `docs/research/agent-activity-streaming.md`：Agent 活动事件与 App 渐变状态栏的调研和决定。
+- `docs/research/web-search-evaluation.md`：Tavily 工具、引用链路和首轮真实评测记录。
