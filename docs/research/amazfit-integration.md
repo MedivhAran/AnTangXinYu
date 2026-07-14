@@ -1,7 +1,7 @@
 # Amazfit 健康数据接入调研
 
 > 调研时间：2026-07-14  
-> 当前状态：完成资料、旧代码、数据边界与 Agent 读取方式调研；目标设备确认为 Amazfit Active 2，最终接入路线等待真机验证。
+> 当前状态：目标设备确认为 Amazfit Active 2；已在用户真机确认 Zepp 向 Health Connect 写入核心数据、分钟级心率和睡眠阶段，等待后台同步与元数据验证后确定实现方案。
 
 ## 这次要回答的问题
 
@@ -80,7 +80,9 @@ Zepp Health 官方 GitHub 曾公开 Huami REST API、OAuth 和 Subscription，�
 
 ### 官方设计
 
-Google 官方明确列出 Zepp/Amazfit 可以通过 Health Connect 分享数据。手表仍需先同步到 Zepp App，Health Connect 不会直接连接手表。Google 当前列出的 Zepp 关键数据包括总步数、距离、能量、睡眠时长和阶段、运动摘要、心率、静息心率、呼吸率、血氧、VO₂ max 和运动路线；HRV、皮肤温度、详细运动分段和健康告警没有列入共享范围。[Google Health 的 Zepp 说明](https://support.google.com/googlehealth/answer/14236613?hl=en)
+Google 官方明确列出 Zepp/Amazfit 可以通过 Health Connect 将数据带入 Google Health。手表仍需先同步到 Zepp App，Health Connect 不会直接连接手表。Google 当前列出的云端数据包括总步数、距离、能量、睡眠时长和阶段、运动摘要、心率、静息心率、呼吸率、血氧、VO₂ max 和运动路线；HRV、皮肤温度、详细运动分段和健康告警不会进入 Google Health。[Google Health 的 Zepp 说明](https://support.google.com/googlehealth/answer/14236613?hl=en)
+
+这份页面描述的是最终进入 Google Health App 和云端账号的数据，不能单独证明 Zepp 在手机本地 Health Connect 中绝对不会写入 HRV 或皮肤温度。手机本地的实际记录范围仍以真机读取为准。
 
 Google Play 的 Health Connect 兼容应用集合也明确列出了 Zepp，因此可以确认全球 Google Play 版本的 Zepp 整体上支持 Health Connect；这仍不等于每个账号、版本和设备都会显示完全相同的菜单。[Google Play 兼容应用集合](https://play.google.com/store/apps/collection/promotion_all__health_connect?hl=en_US)
 
@@ -88,11 +90,29 @@ Health Connect 是 Android 设备上的数据层，不是 Python 后端可以直
 
 Android App 可以在前台读取，也可以另外申请后台读取权限。Health Connect 不会在新数据到达时主动通知 App，官方建议在应用激活时读取，并在获得后台权限后通过后台任务同步。同步需要处理新增、修改、删除、分页、去重和可能过期的 Changes Token。[读取数据](https://developer.android.com/health-and-fitness/health-connect/read-data)、[同步数据](https://developer.android.com/health-and-fitness/health-connect/sync-data)
 
+首次历史读取与后续增量同步是两件事。Changes Token 只记录取得 token 后发生的新增、修改和删除，需要按数据类型分别维护，并在所有分页和服务器上传均成功后推进。删除变更只包含 Health Connect 记录 ID，所以安糖必须保留来源 ID，收到删除后让对应记录不再被 Agent 查询，并重新计算受影响的统计结果。
+
+后台读取需要额外权限并由 Android 后台任务定期执行；App 回到前台时仍应主动补同步。Health Connect 不提供新记录实时推送，所以这条链路不能承诺实时告警。步数、距离等累计量应使用 Health Connect Aggregate API 和用户设置的来源优先级，不能简单相加多个 App 的原始记录。[聚合读取](https://developer.android.com/health-and-fitness/health-connect/aggregate-data)
+
+Expo 的 `expo-background-task` 在 Android 上使用 WorkManager，最短调度间隔是 15 分钟，但实际执行时间由系统决定；用户强制停止 App 后，需要重新打开 App 才会恢复任务。因此它适合趋势同步和主动陪伴的数据准备，不适合低血糖紧急告警。[Expo BackgroundTask](https://docs.expo.dev/versions/latest/sdk/background-task/)
+
+用户可以随时撤销某一种健康权限。撤销后应明确显示该类数据已停止同步和最后同步时间，不能把权限不足表现成数值为零或“没有异常”。撤销权限不会自动删除已经上传到 PostgreSQL 的历史副本，产品需要另行提供已导入数据的删除能力。[Health Connect 删除说明](https://support.google.com/android/answer/12201232)
+
 每条记录带有 Health Connect ID、修改时间、来源应用、可选设备信息、客户端 ID/版本和记录方式。来源应用只能证明“哪一个 App 写入了记录”，不能单独证明数值一定由某块手表传感器直接测得。[数据格式与来源](https://developer.android.com/health-and-fitness/health-connect/data-format)
 
 发布到 Google Play 时，需要申报健康功能、数据安全信息和每一种权限的具体用途，只能申请产品真正需要的最小数据范围。[发布要求](https://developer.android.com/health-and-fitness/health-connect/publish)
 
-React Native 有持续维护的社区库 [`react-native-health-connect`](https://github.com/matinzd/react-native-health-connect)。它提供 TypeScript 接口和 Expo 配置插件，但不是 Google 官方库，需要 development build，不能在 Expo Go 中运行。安糖当前已经使用 development build，因此技术上可以试验；Expo SDK 57、具体数据类型和后台读取仍需真机验证。
+React Native 有持续维护的社区库 [`react-native-health-connect`](https://github.com/matinzd/react-native-health-connect)。它提供 TypeScript 接口，不是 Google 官方库，需要 development build，不能在 Expo Go 中运行。安糖当前已经使用 development build，因此技术上可以接入，但不能直接依据 README 认定与当前 Expo 版本兼容。
+
+### Expo SDK 57 兼容性
+
+安糖当前是 Expo SDK 57、React Native 0.86，并使用 React Native 新架构。`react-native-health-connect` 最新版 `3.5.3` 发布于 2026 年 5 月，声明支持新旧架构，并提供读取、聚合、Changes、后台读取权限和历史读取权限；但项目示例仍停留在 React Native 0.81，没有公开的 Expo 57 构建验证。[v3.5.3](https://github.com/matinzd/react-native-health-connect/releases/tag/v3.5.3)
+
+它的 Expo 说明仍要求使用 `expo-health-connect@0.1.1`。该插件最后发布于 2024 年，源码只修改 AndroidManifest 中的权限说明入口，并没有完成主库 README 对 `MainActivity` 中 `HealthConnectPermissionDelegate.setPermissionDelegate(this)` 的要求。[Expo 插件源码](https://github.com/matinzd/expo-health-connect/blob/main/src/withHealthConnect.ts)、[主库安装说明](https://github.com/matinzd/react-native-health-connect/tree/v3.5.3#installation)
+
+因此，“社区库可以被 Expo development build 打包”是有依据的候选，但“安装两个 npm 包即可稳定工作”没有证据。首轮实现应把真实 development build、原生模块加载、权限弹窗、分钟级心率、睡眠阶段、超过 30 天历史和后台唤醒列为验收项。
+
+自定义候选是先使用 `react-native-health-connect@3.5.3`，由项目自己维护一个很小的 Expo 配置插件，明确完成主库要求的 Android 原生配置。若 React Native 0.86 下出现原生链接、权限或 Changes API 问题，应停止为社区库叠加补丁，改成一个很薄的 Expo Android 模块直接包装 Google 官方 Health Connect SDK。后者工作量更高，但依赖关系和升级边界由项目自己控制。
 
 ### 为什么 Zepp 里可能看不到 Health Connect
 
@@ -108,6 +128,28 @@ Zepp 官方资料能确认新版第三方连接的入口位于 `Zepp 首页 → 
 4. 确认 Zepp 来自 Google Play 官方包 `com.huami.watch.hmwatchmanager`，并记录 Android 版本和 Zepp 完整版本号。
 
 如果系统 Health Connect 可用、Zepp 是最新 Google Play 版本，但两边仍看不到连接入口，再带着上述版本信息和两处页面截图判断是否为 Zepp 当前版本、分批开放或账号地区问题。目前没有官方证据证明 Health Connect 一定会因 Zepp 账号地区而隐藏。
+
+### Active 2 真机验证结果
+
+2026 年 7 月 14 日，用户已在自己的 Android 手机 Health Connect 中确认 Zepp 有实际写入记录。当前出现的数据类型为：
+
+- 活动：步数、锻炼、距离、爬升高度；
+- 身体测量：体重；
+- 生命体征：呼吸频率、静息心率、心率、血氧饱和度；
+- 睡眠。
+
+这证明 `Active 2 → Zepp → Health Connect` 在当前手机、账号和 Zepp 版本上确实可用，不再只是文档层面的兼容性推测。
+
+随后查看具体记录又确认：
+
+- 心率以连续的一分钟区间写入；检查的一条记录包含该分钟内一个 Zepp 心率样本，因此可以支持分钟级趋势分析，但它不是原始 PPG 波形；
+- 睡眠以完整会话写入，并带有浅睡、深睡、REM 等阶段的起止时间。
+
+当前数据粒度已经足够支撑首版的日常活动、运动背景、分钟级心率趋势和睡眠结构分析。仍需确认同步延迟、来源记录是否携带 Active 2 设备型号，以及 Android 后台读取权限下的持续同步行为。
+
+本次实机列表中没有 HRV、皮肤温度、压力、Readiness、PAI、活动能量或 VO₂ max。当前只能确认它们尚未出现在已检查的 Health Connect 数据中，不能推断 Active 2 没有测量这些指标。
+
+体重虽然由 Zepp 写入，但 Active 2 本身不能测量体重。该值可能来自 Zepp 个人资料、手工录入或其他连接设备；读取时必须检查记录方式和设备元数据，不能标成 Active 2 的传感器观测。
 
 ### 基于证据的推论
 
@@ -192,7 +234,7 @@ FHIR 也将心率等测量表达为 Observation，并可关联产生数据的 De
 
 第一优先级是睡眠起止、总时长、规律和设备提供的睡眠阶段；步数、活动时长、久坐、运动类型、强度和持续时间；心率时序、静息心率和运动期间的心率变化。ADA 2026 指南明确要求评估糖尿病患者的身体活动、久坐和睡眠；对 1 型糖尿病，运动会影响低血糖管理，睡眠也存在由低血糖风险和担忧带来的特殊问题。[ADA 2026 健康行为与睡眠](https://diabetesjournals.org/care/article/49/Supplement_1/S89/163932/5-Facilitating-Positive-Health-Behaviors-and-Well)
 
-第二优先级是距离、活动能量、血氧、呼吸率、HRV 和皮肤温度。它们可以补充运动、睡眠和恢复背景，但必须先确认 Active 2 通过所选链路实际提供什么粒度。尤其是 Google 官方明确说明 Zepp 经 Health Connect/Google Health 不共享 HRV 和皮肤温度，Health Connect 自身支持这两类记录并不代表 Zepp 会写入。
+第二优先级是距离、活动能量、血氧、呼吸率、HRV 和皮肤温度。它们可以补充运动、睡眠和恢复背景，但必须先确认 Active 2 通过所选链路实际提供什么粒度。Google 官方明确说明 HRV 和皮肤温度不会进入 Google Health 云端；Health Connect 自身支持这两类记录，也不能反过来证明 Zepp 一定会在手机本地写入。本次真机检查尚未看到这两类数据。
 
 Amazfit 的压力分数、睡眠分数、Readiness 和 PAI 可以保存为“厂商计算结果”，保留厂商和算法来源，但首版不把它们直接当成 FoH 心理状态、疾病判断或权威健康结论。Active 2 官方也说明压力分数由 HRV 变化计算，相关健康功能仅供参考，不能用于医疗诊断。[Active 2 官方健康功能说明](https://support.amazfit.com/en/amazfit_active_2%28round%29/docs/BBCYdksusomgVtxFVVGcU2Ljnze)
 
@@ -205,6 +247,8 @@ Amazfit 的压力分数、睡眠分数、Readiness 和 PAI 可以保存为“厂
 安糖 Android 从 Health Connect 读取用户授权的数据，上传到安糖后端。后端保存有来源的观测记录，并用普通代码生成统计结果。相关 Sub-agent 先读取统计结果，也可以按需要下钻到指定时间段的详细观测，并提出带依据的候选变化。
 
 收益是无需维护手表协议和 Zepp 小程序，能兼容多个向 Health Connect 写数据的品牌。代价是依赖 Google Play 服务，且同步并非实时。
+
+当前真机已经确认睡眠阶段、活动、锻炼、分钟级心率、呼吸频率和血氧等核心记录可以进入 Health Connect，因此候选 A 已具备成为首版主入口的实际依据。后台同步验证影响具体同步行为，但不再影响这条路线的数据可行性判断。
 
 ### 候选 B：Zepp 小程序只补 Health Connect 缺失的能力
 
@@ -221,13 +265,10 @@ Amazfit 的压力分数、睡眠分数、Readiness 和 PAI 可以保存为“厂
 在决定架构前，需要用当前 Active 2 和手机验证：
 
 1. 记录手机 Android 版本、Zepp 完整版本号和 Zepp 安装来源；
-2. 手机是否具备 Health Connect，Zepp 是否出现在其应用权限中；
-3. Zepp 第三方账号关联页面是否出现 Health Connect；
-4. Zepp 实际写入哪些数据类型；
-5. 心率、睡眠和活动数据的粒度；
-6. 一次 Zepp 同步后，Health Connect 多久能看到数据；
-7. 读取时能否得到 Zepp 来源、设备型号和记录方式；
-8. 如需比较云路线，同一份 Zepp 数据能否被 Google Health API 的普通来源查询和 all-sources 同时读取。
+2. 测量一次 Zepp 同步后 Health Connect 出现数据的延迟；
+3. 读取时确认 Zepp 来源、设备型号和记录方式；
+4. 验证安糖 Android 在前台、后台和权限撤销后的同步行为；
+5. 只有仍考虑 Google Health 云路线时，再验证同一份数据能否被普通来源查询和 all-sources 同时读取。
 
 可先使用 Google 官方的 [Health Connect Toolbox](https://developer.android.com/health-and-fitness/health-connect/test/health-connect-toolbox) 查看手机中已有记录、数据类型和来源，不需要为可行性验证先写一套临时代码。
 
