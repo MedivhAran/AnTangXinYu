@@ -163,3 +163,4 @@
 - `docs/research/legacy-project-inventory.md`：旧项目产品功能、Agent 链路、基础设施和问题盘点。
 - `docs/research/agent-activity-streaming.md`：Agent 活动事件与 App 渐变状态栏的调研和决定。
 - `docs/research/web-search-evaluation.md`：Tavily 工具、引用链路和首轮真实评测记录。
+- `docs/research/amazfit-integration.md`：旧 Amazfit 原型、Zepp 官方能力、Health Connect、Google Health API 和替代路线调研。
