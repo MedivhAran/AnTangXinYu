@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { ApiClient, errorMessage, SessionExpiredError } from './src/api/client';
+import { appClient, setSessionExpiredListener } from './src/api/app-client';
+import { errorMessage, SessionExpiredError } from './src/api/client';
 import type { User } from './src/api/types';
 import { AuthScreen } from './src/auth/AuthScreen';
 import { secureTokenStore } from './src/auth/token-store';
 import { ChatScreen } from './src/chat/ChatScreen';
-import { API_URL } from './src/config';
+import { BrandMark } from './src/ui/brand-mark';
+import { colors, radii, spacing, typefaces } from './src/ui/theme';
 
 type AppState =
   | { kind: 'loading' }
@@ -15,17 +18,25 @@ type AppState =
   | { kind: 'startup-error'; message: string };
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppRoot />
+    </SafeAreaProvider>
+  );
+}
+
+function AppRoot() {
   const [state, setState] = useState<AppState>({ kind: 'loading' });
   const [startupAttempt, setStartupAttempt] = useState(0);
-  const apiRef = useRef<ApiClient | null>(null);
+  const api = appClient;
 
-  if (apiRef.current === null) {
-    apiRef.current = new ApiClient(API_URL, secureTokenStore, () => {
-      setState({ kind: 'signed-out', message: '登录已过期，请重新登录。' });
-    });
-  }
-
-  const api = apiRef.current;
+  useEffect(
+    () =>
+      setSessionExpiredListener(() => {
+        setState({ kind: 'signed-out', message: '登录已过期，请重新登录。' });
+      }),
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -61,29 +72,43 @@ export default function App() {
 
   if (state.kind === 'loading') {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator color="#15966A" size="large" />
-        <Text style={styles.loadingText}>正在恢复登录状态…</Text>
-      </View>
+      <SafeAreaView style={styles.centered}>
+        <BrandMark size={62} />
+        <Text style={styles.loadingTitle}>安糖心语</Text>
+        <View style={styles.loadingRow}>
+          <ActivityIndicator color={colors.primary} size="small" />
+          <Text style={styles.loadingText}>正在加载</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (state.kind === 'startup-error') {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorTitle}>启动失败</Text>
-        <Text style={styles.errorText}>{state.message}</Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            setState({ kind: 'loading' });
-            setStartupAttempt((attempt) => attempt + 1);
-          }}
-          style={styles.actionButton}
-        >
-          <Text style={styles.actionButtonText}>重试</Text>
-        </Pressable>
-      </View>
+      <SafeAreaView style={styles.centered}>
+        <View style={styles.errorCard}>
+          <View style={styles.errorMark}>
+            <Text style={styles.errorMarkText}>!</Text>
+          </View>
+          <Text style={styles.errorTitle}>暂时没有连接上</Text>
+          <Text selectable style={styles.errorText}>
+            {state.message}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setState({ kind: 'loading' });
+              setStartupAttempt((attempt) => attempt + 1);
+            }}
+            style={({ pressed }) => [
+              styles.actionButton,
+              pressed && styles.actionButtonPressed,
+            ]}
+          >
+            <Text style={styles.actionButtonText}>再试一次</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -111,36 +136,78 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 28,
-    backgroundColor: '#F7F9F8',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    backgroundColor: colors.background,
+  },
+  loadingTitle: {
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingTop: spacing.sm,
   },
   loadingText: {
-    marginTop: 14,
-    color: '#65716B',
-    fontSize: 15,
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 13,
+  },
+  errorCard: {
+    width: '100%',
+    maxWidth: 420,
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.xl,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.line,
+    borderRadius: radii.xl,
+    borderCurve: 'continuous',
+    backgroundColor: colors.paper,
+  },
+  errorMark: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.coralSoft,
+  },
+  errorMarkText: {
+    color: colors.danger,
+    fontFamily: typefaces.serif,
+    fontSize: 24,
+    fontWeight: '700',
   },
   errorTitle: {
-    color: '#712B2B',
-    fontSize: 22,
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 24,
     fontWeight: '700',
   },
   errorText: {
-    marginTop: 10,
-    color: '#65716B',
-    fontSize: 15,
-    lineHeight: 22,
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 14,
+    lineHeight: 21,
     textAlign: 'center',
   },
   actionButton: {
-    marginTop: 22,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    borderRadius: 22,
-    backgroundColor: '#15966A',
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary,
   },
+  actionButtonPressed: { opacity: 0.72 },
   actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.paper,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 14,
   },
 });

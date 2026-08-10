@@ -1,15 +1,15 @@
+import { useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { ChatSource } from '../api/types';
+import { MessageMarkup, type MessageTone } from './message-markup';
 
 type Props = {
   content: string;
   sources: ChatSource[];
   onOpenError: (message: string) => void;
+  tone?: MessageTone;
 };
-
-const citationPattern = /(\[S[1-9]\d*\])/g;
-const exactCitationPattern = /^\[(S[1-9]\d*)\]$/;
 
 function openSource(source: ChatSource, onOpenError: Props['onOpenError']) {
   void Linking.openURL(source.url).catch((error: unknown) => {
@@ -18,51 +18,155 @@ function openSource(source: ChatSource, onOpenError: Props['onOpenError']) {
   });
 }
 
+function sourceDomain(url: string) {
+  return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+}
+
 /** 只把后端确认过、并且出现在 sources 中的严格 [S数字] 变成链接。 */
-export function MessageSources({ content, sources, onOpenError }: Props) {
+export function MessageSources({
+  content,
+  sources,
+  onOpenError,
+  tone = 'assistant',
+}: Props) {
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const sourcesById = new Map(sources.map((source) => [source.sourceId, source]));
+  const userTone = tone === 'user';
 
   return (
     <>
-      <Text style={styles.messageText}>
-        {content.split(citationPattern).map((part, index) => {
-          const sourceId = exactCitationPattern.exec(part)?.[1];
-          const source = sourceId === undefined ? undefined : sourcesById.get(sourceId);
-          if (source === undefined) return part;
-
-          return (
-            <Text
-              accessibilityLabel={`打开来源 ${source.sourceId}`}
-              accessibilityRole="link"
-              key={`${source.sourceId}-${index}`}
-              onPress={() => openSource(source, onOpenError)}
-              style={styles.citation}
-            >
-              {part}
-            </Text>
-          );
-        })}
-      </Text>
+      <MessageMarkup
+        content={content}
+        onOpenSource={(source) => openSource(source, onOpenError)}
+        sourcesById={sourcesById}
+        tone={tone}
+      />
 
       {sources.length === 0 ? null : (
-        <View style={styles.sources}>
-          <Text style={styles.sourcesTitle}>来源</Text>
-          {sources.map((source) => (
-            <Pressable
-              accessibilityLabel={`打开来源 ${source.sourceId}：${source.title}`}
-              accessibilityRole="link"
-              key={source.sourceId}
-              onPress={() => openSource(source, onOpenError)}
-              style={({ pressed }) => [styles.source, pressed && styles.sourcePressed]}
+        <View
+          style={[
+            styles.sources,
+            userTone ? styles.userSourcesBorder : styles.assistantSourcesBorder,
+          ]}
+        >
+          <Pressable
+            accessibilityHint={
+              sourcesExpanded ? '双击收起来源列表' : '双击展开来源列表'
+            }
+            accessibilityLabel={`${sourcesExpanded ? '收起' : '展开'}参考来源，共 ${sources.length} 条`}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: sourcesExpanded }}
+            hitSlop={8}
+            onPress={() => setSourcesExpanded((expanded) => !expanded)}
+            style={({ pressed }) => [
+              styles.sourcesToggle,
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={styles.sourcesHeading}>
+              <Text
+                style={[
+                  styles.sourcesTitle,
+                  userTone ? styles.userSourceTitle : styles.assistantSourceTitle,
+                ]}
+              >
+                参考来源
+              </Text>
+              <View
+                style={[
+                  styles.sourceCount,
+                  userTone ? styles.userSourceCount : styles.assistantSourceCount,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.sourceCountText,
+                    userTone
+                      ? styles.userSourceSecondary
+                      : styles.assistantSourceSecondary,
+                  ]}
+                >
+                  {sources.length}
+                </Text>
+              </View>
+            </View>
+            <Text
+              style={[
+                styles.toggleText,
+                userTone
+                  ? styles.userSourceSecondary
+                  : styles.assistantSourceSecondary,
+              ]}
             >
-              <Text style={styles.sourceTitle}>
-                {source.sourceId} · {source.title}
-              </Text>
-              <Text style={styles.sourceUrl}>
-                {source.url}
-              </Text>
-            </Pressable>
-          ))}
+              {sourcesExpanded ? '收起' : '展开'}
+            </Text>
+          </Pressable>
+
+          {sourcesExpanded ? (
+            <View style={styles.sourceList}>
+              {sources.map((source) => {
+                const domain = sourceDomain(source.url);
+                return (
+                  <Pressable
+                    accessibilityHint={`将在浏览器中打开 ${domain}`}
+                    accessibilityLabel={`打开来源 ${source.sourceId}：${source.title}`}
+                    accessibilityRole="link"
+                    key={source.sourceId}
+                    onPress={() => openSource(source, onOpenError)}
+                    style={({ pressed }) => [
+                      styles.source,
+                      userTone ? styles.userSource : styles.assistantSource,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.sourceId,
+                        userTone
+                          ? styles.userSourceId
+                          : styles.assistantSourceId,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.sourceIdText,
+                          userTone
+                            ? styles.userSourceSecondary
+                            : styles.assistantSourceSecondary,
+                        ]}
+                      >
+                        {source.sourceId}
+                      </Text>
+                    </View>
+                    <View style={styles.sourceCopy}>
+                      <Text
+                        numberOfLines={2}
+                        style={[
+                          styles.sourceTitle,
+                          userTone
+                            ? styles.userSourceTitle
+                            : styles.assistantSourceTitle,
+                        ]}
+                      >
+                        {source.title}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.sourceDomain,
+                          userTone
+                            ? styles.userSourceSecondary
+                            : styles.assistantSourceSecondary,
+                        ]}
+                      >
+                        {domain}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
       )}
     </>
@@ -70,18 +174,74 @@ export function MessageSources({ content, sources, onOpenError }: Props) {
 }
 
 const styles = StyleSheet.create({
-  messageText: { color: '#17211C', fontSize: 16, lineHeight: 23 },
-  citation: { color: '#157D5B', fontWeight: '700', textDecorationLine: 'underline' },
   sources: {
-    marginTop: 10,
-    paddingTop: 9,
+    marginTop: 11,
+    paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#E1E7E4',
-    gap: 7,
+    gap: 8,
   },
-  sourcesTitle: { color: '#65716B', fontSize: 12, fontWeight: '600' },
-  source: { paddingVertical: 2 },
-  sourcePressed: { opacity: 0.6 },
-  sourceTitle: { color: '#155F49', fontSize: 13, fontWeight: '600', lineHeight: 18 },
-  sourceUrl: { marginTop: 1, color: '#6D7A74', fontSize: 11, lineHeight: 15 },
+  assistantSourcesBorder: { borderTopColor: '#E1E7E4' },
+  userSourcesBorder: { borderTopColor: 'rgba(255, 255, 255, 0.22)' },
+  sourcesToggle: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sourcesHeading: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sourcesTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 0.16 },
+  sourceCount: {
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+    borderRadius: 9,
+  },
+  assistantSourceCount: { backgroundColor: '#EDF3F0' },
+  userSourceCount: { backgroundColor: 'rgba(255, 255, 255, 0.14)' },
+  sourceCountText: {
+    fontSize: 10,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  toggleText: { fontSize: 12, fontWeight: '600' },
+  sourceList: { gap: 7 },
+  source: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 12,
+    borderCurve: 'continuous',
+  },
+  assistantSource: { backgroundColor: '#F3F7F5' },
+  userSource: { backgroundColor: 'rgba(255, 255, 255, 0.11)' },
+  sourceId: {
+    minWidth: 30,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    borderCurve: 'continuous',
+  },
+  assistantSourceId: { backgroundColor: '#E3EEE9' },
+  userSourceId: { backgroundColor: 'rgba(255, 255, 255, 0.13)' },
+  sourceIdText: {
+    fontSize: 10,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  sourceCopy: { flex: 1, gap: 2 },
+  sourceTitle: { fontSize: 13, fontWeight: '600', lineHeight: 18 },
+  sourceDomain: { fontSize: 11, lineHeight: 15 },
+  assistantSourceTitle: { color: '#1F3028' },
+  userSourceTitle: { color: '#F8FCFA' },
+  assistantSourceSecondary: { color: '#68766F' },
+  userSourceSecondary: { color: '#CCE7DA' },
+  pressed: { opacity: 0.62 },
 });

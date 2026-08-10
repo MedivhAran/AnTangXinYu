@@ -6,8 +6,43 @@ from antang_api.models.chat import (
     MessageRole,
     MessageStatus,
 )
-from antang_api.models.user import LoginSession, User
+from antang_api.models.companion_memory import CompanionMemoryCursor
 from antang_api.models.context import ConversationSummary
+from antang_api.models.health_profile import (
+    FactAssertion,
+    FactTemporalStatus,
+    HealthFact,
+    HealthFactStatus,
+    HealthFactType,
+    HealthProfileChange,
+    PersonalProfile,
+    PersonalProfileField,
+    ProfileChangeMode,
+    ProfileChangeStatus,
+    ProfileOperation,
+    ProfileTargetType,
+)
+from antang_api.models.proactive_care import (
+    CarePlan,
+    CarePlanStatus,
+    ProactiveCareSettings,
+    ProactiveCareTask,
+    ProactiveCareTaskKind,
+    ProactiveCareTaskStatus,
+    PushDelivery,
+    PushDeliveryStatus,
+    PushInstallation,
+    PushPermissionState,
+    PushPlatform,
+    RoutineCareCadence,
+)
+from antang_api.models.user import LoginSession, User
+from antang_api.models.wearable import (
+    WearableImport,
+    WearableObservation,
+    WearableRecordTombstone,
+    WearableRecordType,
+)
 
 __all__ = [
     "AgentToolCall",
@@ -20,4 +55,33 @@ __all__ = [
     "MessageStatus",
     "User",
     "ConversationSummary",
+    "CompanionMemoryCursor",
+    "CarePlan",
+    "CarePlanStatus",
+    "FactAssertion",
+    "FactTemporalStatus",
+    "HealthFact",
+    "HealthFactStatus",
+    "HealthFactType",
+    "HealthProfileChange",
+    "PersonalProfile",
+    "PersonalProfileField",
+    "ProfileChangeMode",
+    "ProfileChangeStatus",
+    "ProfileOperation",
+    "ProfileTargetType",
+    "ProactiveCareSettings",
+    "ProactiveCareTask",
+    "ProactiveCareTaskKind",
+    "ProactiveCareTaskStatus",
+    "PushDelivery",
+    "PushDeliveryStatus",
+    "PushInstallation",
+    "PushPermissionState",
+    "PushPlatform",
+    "RoutineCareCadence",
+    "WearableImport",
+    "WearableObservation",
+    "WearableRecordTombstone",
+    "WearableRecordType",
 ]

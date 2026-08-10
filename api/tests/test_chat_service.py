@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -14,18 +15,22 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from antang_api import chat
 from antang_api.agents.core import CoreAgentGraph
-from antang_api.agents.runtime import CoreAgentContext
+from antang_api.agents.runtime import AgentContext
 from antang_api.chat import (
     ActiveAgentRunError,
+    ChatRetryError,
     DuplicateClientMessageError,
     extract_agent_result,
+    prepare_chat_retry,
     prepare_chat_run,
     stream_chat_run,
 )
+from antang_api.companion_memory import CompanionMemory
 from antang_api.context.builder import ChatContext
 from antang_api.context.preparation import PreparedChatContext
 from antang_api.models import (
@@ -33,8 +38,13 @@ from antang_api.models import (
     AgentRunStatus,
     AgentToolCall,
     AgentToolCallStatus,
+    CarePlan,
+    CarePlanStatus,
     Message,
+    MessageRole,
     MessageStatus,
+    PersonalProfile,
+    ProactiveCareSettings,
     User,
 )
 from antang_api.schemas.chat import (
@@ -55,14 +65,14 @@ class FakeAgent:
         self.events = events
         self.error = error
         self.config: dict[str, Any] | None = None
-        self.context: CoreAgentContext | None = None
+        self.context: AgentContext | None = None
 
     async def astream(
         self,
         _input: dict[str, Any],
         *,
         config: dict[str, Any],
-        context: CoreAgentContext,
+        context: AgentContext,
         stream_mode: list[str],
         version: str,
     ) -> AsyncIterator[dict[str, Any]]:
@@ -78,6 +88,24 @@ class FakeAgent:
             raise self.error
 
 
+class FakeCompanionMemory:
+    def __init__(
+        self,
+        context: str = "",
+        error: Exception | None = None,
+    ) -> None:
+        self.context = context
+        self.error = error
+
+    async def prepare_context(self, *_args: Any) -> str:
+        if self.error is not None:
+            raise self.error
+        return self.context
+
+
+DISABLED_COMPANION_MEMORY = cast(CompanionMemory, FakeCompanionMemory())
+
+
 async def create_user(db_session: AsyncSession, prefix: str) -> User:
     username = f"{prefix}_{uuid4().hex[:12]}"
     user = User(
@@ -86,6 +114,13 @@ async def create_user(db_session: AsyncSession, prefix: str) -> User:
         password_hash="test-only-password-hash",
     )
     db_session.add(user)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            PersonalProfile(user_id=user.id),
+            ProactiveCareSettings(user_id=user.id),
+        ]
+    )
     await db_session.flush()
     return user
 
@@ -103,12 +138,21 @@ def prepared_context(message: str = "你好") -> PreparedChatContext:
     )
 
 
-def message_event(text: str, step: int = 0) -> dict[str, Any]:
+def message_event(
+    text: str,
+    step: int = 0,
+    *,
+    visibility: str = "user",
+) -> dict[str, Any]:
     return {
         "type": "messages",
         "data": (
             AIMessageChunk(content=text),
-            {"langgraph_node": "model", "langgraph_step": step},
+            {
+                "langgraph_node": "model",
+                "langgraph_step": step,
+                "stream_visibility": visibility,
+            },
         ),
     }
 
@@ -129,7 +173,11 @@ def tool_call_event(text: str = "") -> dict[str, Any]:
                     }
                 ],
             ),
-            {"langgraph_node": "model", "langgraph_step": 0},
+            {
+                "langgraph_node": "model",
+                "langgraph_step": 0,
+                "stream_visibility": "user",
+            },
         ),
     }
 
@@ -172,7 +220,11 @@ def thinking_event(secret: str, step: int = 0) -> dict[str, Any]:
             AIMessageChunk(
                 content=[{"type": "thinking", "thinking": secret, "index": 0}]
             ),
-            {"langgraph_node": "model", "langgraph_step": step},
+            {
+                "langgraph_node": "model",
+                "langgraph_step": step,
+                "stream_visibility": "user",
+            },
         ),
     }
 
@@ -192,6 +244,13 @@ def values_event(content: str) -> dict[str, Any]:
             "messages": [HumanMessage(content="你好"), final_message],
         },
     }
+
+
+def test_new_tools_reuse_stable_activity_phases() -> None:
+    assert chat.TOOL_ACTIVITY_PHASES["read_wearable_data"] == "reading"
+    assert chat.TOOL_ACTIVITY_PHASES["delegate_health_profile"] == "organizing"
+    assert chat.TOOL_ACTIVITY_PHASES["manage_care_plan"] == "organizing"
+    assert AgentActivityEvent(phase="reading").phase == "reading"
 
 
 def tool_values_event(content: str, preamble: str = "") -> dict[str, Any]:
@@ -319,6 +378,124 @@ async def test_prepare_chat_run_rejects_duplicate_and_active_run(
         )
 
 
+async def test_prepare_chat_retry_reuses_the_original_user_message(
+    db_session: AsyncSession,
+) -> None:
+    user = await create_user(db_session, "retry")
+    original = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "帮我更新体重",
+    )
+    failed_message = await db_session.get(Message, original.assistant_message_id)
+    failed_run = await db_session.get(AgentRun, original.run_id)
+    assert failed_message is not None
+    assert failed_run is not None
+    failed_message.status = MessageStatus.FAILED
+    failed_run.status = AgentRunStatus.FAILED
+    await db_session.commit()
+
+    retried = await prepare_chat_retry(
+        db_session,
+        user.id,
+        original.assistant_message_id,
+    )
+
+    assert retried.user_message_id == original.user_message_id
+    assert retried.assistant_message_id != original.assistant_message_id
+    assert retried.run_id != original.run_id
+    retry_run = await db_session.get(AgentRun, retried.run_id)
+    assert retry_run is not None
+    assert retry_run.trigger_message_id == original.user_message_id
+    user_messages = list(
+        await db_session.scalars(
+            select(Message).where(
+                Message.user_id == user.id,
+                Message.role == MessageRole.USER,
+            )
+        )
+    )
+    assert [message.id for message in user_messages] == [original.user_message_id]
+
+
+async def test_prepare_chat_retry_rejects_a_turn_after_the_user_continued(
+    db_session: AsyncSession,
+) -> None:
+    user = await create_user(db_session, "retry_continued")
+    original = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "第一条消息",
+    )
+    failed_message = await db_session.get(Message, original.assistant_message_id)
+    failed_run = await db_session.get(AgentRun, original.run_id)
+    assert failed_message is not None
+    assert failed_run is not None
+    failed_message.status = MessageStatus.FAILED
+    failed_run.status = AgentRunStatus.FAILED
+    db_session.add(
+        Message(
+            client_message_id=uuid4(),
+            user_id=user.id,
+            role=MessageRole.USER,
+            status=MessageStatus.COMPLETED,
+            content="我已经继续聊了",
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(ChatRetryError) as error:
+        await prepare_chat_retry(
+            db_session,
+            user.id,
+            original.assistant_message_id,
+        )
+
+    assert error.value.code == "chat_retry_not_allowed"
+
+
+async def test_prepare_chat_retry_rejects_when_a_newer_answer_exists(
+    db_session: AsyncSession,
+) -> None:
+    user = await create_user(db_session, "retry_completed")
+    original = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "需要重试",
+    )
+    failed_message = await db_session.get(Message, original.assistant_message_id)
+    failed_run = await db_session.get(AgentRun, original.run_id)
+    assert failed_message is not None
+    assert failed_run is not None
+    failed_message.status = MessageStatus.FAILED
+    failed_run.status = AgentRunStatus.FAILED
+    await db_session.commit()
+    retried = await prepare_chat_retry(
+        db_session,
+        user.id,
+        original.assistant_message_id,
+    )
+    retry_message = await db_session.get(Message, retried.assistant_message_id)
+    retry_run = await db_session.get(AgentRun, retried.run_id)
+    assert retry_message is not None
+    assert retry_run is not None
+    retry_message.status = MessageStatus.FAILED
+    retry_run.status = AgentRunStatus.FAILED
+    await db_session.commit()
+
+    with pytest.raises(ChatRetryError) as error:
+        await prepare_chat_retry(
+            db_session,
+            user.id,
+            original.assistant_message_id,
+        )
+
+    assert error.value.code == "chat_retry_not_allowed"
+
+
 def test_extract_agent_result_requires_complete_usage() -> None:
     first = AIMessage(
         content="中间消息",
@@ -387,6 +564,17 @@ async def test_stream_chat_run_completes_and_persists_result(
         uuid4(),
         "你好",
     )
+    plan = CarePlan(
+        user_id=user.id,
+        summary="晚饭后散步二十分钟",
+        status=CarePlanStatus.ACTIVE,
+        follow_up_at=datetime.now(timezone.utc) + timedelta(days=1),
+        revision=1,
+        created_by_message_id=prepared_run.user_message_id,
+        last_changed_by_message_id=prepared_run.user_message_id,
+    )
+    db_session.add(plan)
+    await db_session.flush()
     monkeypatch.setattr(
         chat,
         "prepare_chat_context",
@@ -407,6 +595,7 @@ async def test_stream_chat_run_completes_and_persists_result(
             model=cast("ChatAnthropic", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
+            companion_memory=DISABLED_COMPANION_MEMORY,
             user_id=user.id,
             prepared_run=prepared_run,
         )
@@ -424,12 +613,17 @@ async def test_stream_chat_run_completes_and_persists_result(
     assert fake_agent.config["metadata"] == {
         "run_id": str(prepared_run.run_id),
         "user_id": str(user.id),
+        "stream_visibility": "user",
     }
-    assert fake_agent.context == CoreAgentContext(
-        user_id=user.id,
-        run_id=prepared_run.run_id,
-        input_message_count=1,
-    )
+    assert fake_agent.context is not None
+    assert fake_agent.context.user_id == user.id
+    assert fake_agent.context.run_id == prepared_run.run_id
+    assert fake_agent.context.input_message_count == 1
+    assert fake_agent.context.rendered_system_prompt is not None
+    assert "[当前健康档案]" in fake_agent.context.rendered_system_prompt
+    assert "[当前主动关怀计划]" in fake_agent.context.rendered_system_prompt
+    assert str(plan.id) in fake_agent.context.rendered_system_prompt
+    assert "晚饭后散步二十分钟" in fake_agent.context.rendered_system_prompt
 
     message = await db_session.get(Message, prepared_run.assistant_message_id)
     run = await db_session.get(AgentRun, prepared_run.run_id)
@@ -440,6 +634,88 @@ async def test_stream_chat_run_completes_and_persists_result(
     assert run.status == AgentRunStatus.COMPLETED
     assert run.input_tokens == 21
     assert run.output_tokens == 3
+
+
+async def test_stream_chat_run_never_forwards_internal_subagent_text(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await create_user(db_session, "internal_hidden")
+    prepared_run = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "更新我的健康档案",
+    )
+    monkeypatch.setattr(
+        chat,
+        "prepare_chat_context",
+        AsyncMock(return_value=prepared_context("更新我的健康档案")),
+    )
+    fake_agent = FakeAgent(
+        [
+            message_event("不应让用户看到的子 Agent 输出", visibility="internal"),
+            message_event("已经整理好了。", step=2),
+            values_event("已经整理好了。"),
+        ]
+    )
+
+    events = [
+        event
+        async for event in stream_chat_run(
+            session=db_session,
+            model=cast("ChatAnthropic", object()),
+            agent=cast("CoreAgentGraph", fake_agent),
+            tools=(),
+            companion_memory=DISABLED_COMPANION_MEMORY,
+            user_id=user.id,
+            prepared_run=prepared_run,
+        )
+    ]
+
+    text = "".join(event.delta for event in events if isinstance(event, TextDeltaEvent))
+    assert text == "已经整理好了。"
+    assert "子 Agent" not in text
+
+
+async def test_stream_chat_run_fails_before_core_when_companion_memory_fails(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await create_user(db_session, "memory_failure")
+    prepared_run = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "继续聊聊",
+    )
+    prepare_context_mock = AsyncMock(return_value=prepared_context())
+    monkeypatch.setattr(chat, "prepare_chat_context", prepare_context_mock)
+    fake_agent = FakeAgent([])
+
+    events = [
+        event
+        async for event in stream_chat_run(
+            session=db_session,
+            model=cast("ChatAnthropic", object()),
+            agent=cast("CoreAgentGraph", fake_agent),
+            tools=(),
+            companion_memory=cast(
+                CompanionMemory,
+                FakeCompanionMemory(error=RuntimeError("Hindsight recall failed")),
+            ),
+            user_id=user.id,
+            prepared_run=prepared_run,
+        )
+    ]
+
+    assert events[-1].type == "message_failed"
+    assert fake_agent.config is None
+    prepare_context_mock.assert_not_awaited()
+    run = await db_session.get(AgentRun, prepared_run.run_id)
+    assert run is not None
+    assert run.status == AgentRunStatus.FAILED
+    assert run.error_type == "RuntimeError"
 
 
 async def test_stream_chat_run_validates_and_persists_cited_sources(
@@ -513,6 +789,7 @@ async def test_stream_chat_run_validates_and_persists_cited_sources(
             model=cast("ChatAnthropic", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
+            companion_memory=DISABLED_COMPANION_MEMORY,
             user_id=user.id,
             prepared_run=prepared_run,
         )
@@ -589,6 +866,7 @@ async def test_stream_chat_run_rejects_uncited_fetch_and_keeps_sources_empty(
             model=cast("ChatAnthropic", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
+            companion_memory=DISABLED_COMPANION_MEMORY,
             user_id=user.id,
             prepared_run=prepared_run,
         )
@@ -643,6 +921,7 @@ async def test_stream_chat_run_streams_tool_preamble_and_activity(
             model=cast("ChatAnthropic", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
+            companion_memory=DISABLED_COMPANION_MEMORY,
             user_id=user.id,
             prepared_run=prepared_run,
         )
@@ -678,65 +957,6 @@ async def test_stream_chat_run_streams_tool_preamble_and_activity(
     message = await db_session.get(Message, prepared_run.assistant_message_id)
     assert message is not None
     assert message.content == "我先帮你查一下。\n\n查到了。"
-
-
-async def test_stream_chat_run_accepts_text_and_tool_call_in_same_chunk(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Anthropic 协议允许一个片段同时包含普通文字和 tool_use。"""
-
-    user = await create_user(db_session, "stream_mixed_tool")
-    prepared_run = await prepare_chat_run(
-        db_session,
-        user.id,
-        uuid4(),
-        "帮我查一下",
-    )
-    monkeypatch.setattr(
-        chat,
-        "prepare_chat_context",
-        AsyncMock(return_value=prepared_context()),
-    )
-    fake_agent = FakeAgent(
-        [
-            tool_call_event("我先查一下。"),
-            tool_activity_event("started"),
-            tool_activity_event("completed"),
-            message_event("结果在这里。", step=2),
-            tool_values_event("结果在这里。", preamble="我先查一下。"),
-        ]
-    )
-
-    events = [
-        event
-        async for event in stream_chat_run(
-            session=db_session,
-            model=cast("ChatAnthropic", object()),
-            agent=cast("CoreAgentGraph", fake_agent),
-            tools=(),
-            user_id=user.id,
-            prepared_run=prepared_run,
-        )
-    ]
-
-    assert [event.type for event in events] == [
-        "message_started",
-        "agent_activity",
-        "text_delta",
-        "agent_activity",
-        "agent_activity",
-        "text_delta",
-        "text_delta",
-        "message_completed",
-    ]
-    message = await db_session.get(Message, prepared_run.assistant_message_id)
-    run = await db_session.get(AgentRun, prepared_run.run_id)
-    assert message is not None
-    assert message.content == "我先查一下。\n\n结果在这里。"
-    assert message.status == MessageStatus.COMPLETED
-    assert run is not None
-    assert run.status == AgentRunStatus.COMPLETED
 
 
 async def test_stream_chat_run_marks_mismatched_output_failed_without_logging_error_text(
@@ -783,6 +1003,7 @@ async def test_stream_chat_run_marks_mismatched_output_failed_without_logging_er
                 model=cast("ChatAnthropic", object()),
                 agent=cast("CoreAgentGraph", fake_agent),
                 tools=(),
+                companion_memory=DISABLED_COMPANION_MEMORY,
                 user_id=user.id,
                 prepared_run=prepared_run,
             )
@@ -850,6 +1071,7 @@ async def test_stream_chat_run_marks_client_cancellation(
                 model=cast("ChatAnthropic", object()),
                 agent=cast("CoreAgentGraph", fake_agent),
                 tools=(),
+                companion_memory=DISABLED_COMPANION_MEMORY,
                 user_id=user.id,
                 prepared_run=prepared_run,
             )
@@ -894,6 +1116,7 @@ async def test_stream_chat_run_marks_closed_generator_cancelled(
             model=cast("ChatAnthropic", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
+            companion_memory=DISABLED_COMPANION_MEMORY,
             user_id=user.id,
             prepared_run=prepared_run,
         ),

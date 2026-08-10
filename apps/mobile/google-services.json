@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "796524470941",
+    "project_id": "antang-9a693",
+    "storage_bucket": "antang-9a693.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:796524470941:android:b8c216716547007875aa74",
+        "android_client_info": {
+          "package_name": "com.antang.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLZlI_BhpzhgSHKSPEQjkCaUyFu5BN1dI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

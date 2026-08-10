@@ -92,6 +92,57 @@ async def test_build_chat_context_without_summary(
     ]
 
 
+async def test_build_chat_context_keeps_proactive_opening_before_short_reply(
+    db_session: AsyncSession,
+) -> None:
+    """主动关怀和用户的简短回复按真实顺序进入下一轮 Core 上下文。"""
+
+    username = f"proactive_context_{uuid4().hex[:12]}"
+    user = User(
+        username=username,
+        username_normalized=username,
+        password_hash="test-only-password-hash",
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    messages = [
+        Message(
+            user_id=user.id,
+            role=MessageRole.ASSISTANT,
+            status=MessageStatus.COMPLETED,
+            content="你昨天说晚上总担心低血糖，今天感觉好一点了吗？",
+        ),
+        Message(
+            user_id=user.id,
+            role=MessageRole.ASSISTANT,
+            status=MessageStatus.COMPLETED,
+            content="如果你愿意，也可以只告诉我是不是还在担心。",
+        ),
+        Message(
+            user_id=user.id,
+            role=MessageRole.USER,
+            status=MessageStatus.COMPLETED,
+            content="对。",
+        ),
+    ]
+    db_session.add_all(messages)
+    await db_session.flush()
+
+    context = await build_chat_context(db_session, user.id, messages[-1].id)
+
+    assert [type(message) for message in context.messages] == [
+        AIMessage,
+        AIMessage,
+        HumanMessage,
+    ]
+    assert [message.content for message in context.messages] == [
+        "你昨天说晚上总担心低血糖，今天感觉好一点了吗？",
+        "如果你愿意，也可以只告诉我是不是还在担心。",
+        "对。",
+    ]
+
+
 async def test_build_chat_context_uses_latest_summary_boundary(
     db_session: AsyncSession,
 ) -> None:

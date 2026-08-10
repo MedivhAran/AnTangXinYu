@@ -165,7 +165,7 @@ async def _load_completed_tool_messages(
 
     if after_message_id is not None:
         tool_call_query = tool_call_query.where(
-            AgentRun.trigger_message_id > after_message_id,
+            AgentRun.result_message_id > after_message_id,
         )
 
     rows = await session.execute(tool_call_query)

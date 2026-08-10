@@ -1,24 +1,62 @@
+import {
+  ArrowUp01Icon,
+  Attachment01Icon,
+  Camera01Icon,
+  FileChartLineIcon,
+  FolderHeartIcon,
+  Menu01Icon,
+  StopIcon,
+} from '@hugeicons/core-free-icons';
 import { randomUUID } from 'expo-crypto';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
-  Platform,
+  Modal,
   Pressable,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiClient, ApiError, errorMessage } from '../api/client';
-import type { ChatMessage, User } from '../api/types';
+import type {
+  ChatMessage,
+  ChatStreamEvent,
+  MessageHistory,
+  User,
+} from '../api/types';
 import { ActivityStatus } from './ActivityStatus';
+import {
+  AttachmentPreview,
+  CameraScreen,
+  type DraftAttachment,
+  ReportPickerScreen,
+} from './attachment-flows';
 import { chatReducer, initialChatState } from './chat-state';
 import { MessageSources } from './MessageSources';
+import { HealthProfileCards } from '../health-profile/health-profile-cards';
+import { useHealthProfileCards } from '../health-profile/use-health-profile-cards';
+import { useHealthConnect } from '../health-connect/use-health-connect';
+import { HealthOverviewScreen } from '../health-overview';
+import { AppMenu, type ConversationAnchor } from '../navigation/app-menu';
+import { useNotifications } from '../notifications/use-notifications';
+import { CareSettingsModal } from '../proactive-care/care-settings-modal';
+import { BrandMark } from '../ui/brand-mark';
+import { AppIcon } from '../ui/icon';
+import { colors, radii, spacing, typefaces } from '../ui/theme';
 
 type Props = {
   api: ApiClient;
@@ -26,39 +64,195 @@ type Props = {
   onSignedOut: () => void;
 };
 
+const dayFormatter = new Intl.DateTimeFormat('zh-CN', {
+  month: 'long',
+  day: 'numeric',
+  weekday: 'short',
+});
+
+const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+function localDay(value: string): string {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function conversationGroup(value: string): string {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (localDay(value) === localDay(today.toISOString())) return '今天';
+  if (localDay(value) === localDay(yesterday.toISOString())) return '昨天';
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
 export function ChatScreen({ api, user, onSignedOut }: Props) {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [draft, setDraft] = useState('');
+  const [historyReady, setHistoryReady] = useState(false);
+  const [targetMessageId, setTargetMessageId] = useState<string | null>(null);
+  const [showNewMessage, setShowNewMessage] = useState(false);
+  const [showCareSettings, setShowCareSettings] = useState(false);
+  const [showHealthOverview, setShowHealthOverview] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const [showReportPicker, setShowReportPicker] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [attachment, setAttachment] = useState<DraftAttachment | null>(null);
+  const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const streamController = useRef<AbortController | null>(null);
+  const nearEnd = useRef(true);
+  const knownMessageIds = useMemo(
+    () => new Set(state.messages.map((message) => message.id)),
+    [state.messages],
+  );
+  const healthProfileCards = useHealthProfileCards(api);
+  const healthConnect = useHealthConnect(user.id, api);
+  const refreshHealthProfileCards = healthProfileCards.refresh;
+  const conversationAnchors = useMemo<ConversationAnchor[]>(
+    () =>
+      state.messages
+        .filter(
+          (message) =>
+            message.role === 'user' && message.content.trim().length > 0,
+        )
+        .slice(-16)
+        .reverse()
+        .map((message) => ({
+          group: conversationGroup(message.createdAt),
+          id: message.id,
+          preview: message.content.replace(/\s+/g, ' ').trim(),
+          time: timeFormatter.format(new Date(message.createdAt)),
+        })),
+    [state.messages],
+  );
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () =>
+      setKeyboardVisible(true),
+    );
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () =>
+      setKeyboardVisible(false),
+    );
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  const mergeNotificationMessages = useCallback(
+    (messages: ChatMessage[], targetId: string | null) => {
+      const hasNewMessage = messages.some(
+        (message) => !knownMessageIds.has(message.id),
+      );
+      dispatch({ type: 'history-merged', messages });
+      if (targetId !== null) {
+        setTargetMessageId(targetId);
+        setShowNewMessage(false);
+      } else if (hasNewMessage && nearEnd.current) {
+        requestAnimationFrame(() =>
+          listRef.current?.scrollToEnd({ animated: true }),
+        );
+      } else if (hasNewMessage) {
+        setShowNewMessage(true);
+      }
+    },
+    [knownMessageIds],
+  );
+
+  const reportNotificationError = useCallback((message: string) => {
+    dispatch({ type: 'history-failed', message });
+  }, []);
+
+  const fetchLatest = useCallback(async () => {
+    const [page] = await Promise.all([
+      api.getMessages(),
+      refreshHealthProfileCards(),
+    ]);
+    return page;
+  }, [api, refreshHealthProfileCards]);
+
+  const applyLatest = useCallback((page: MessageHistory) => {
+    dispatch({
+      type: 'history-replaced',
+      messages: page.messages,
+      nextBefore: page.nextBefore,
+    });
+    setHistoryReady(true);
+  }, []);
 
   const loadLatest = useCallback(async () => {
     dispatch({ type: 'history-loading' });
     try {
-      const page = await api.getMessages();
-      dispatch({
-        type: 'history-replaced',
-        messages: page.messages,
-        nextBefore: page.nextBefore,
-      });
+      applyLatest(await fetchLatest());
     } catch (error) {
       dispatch({ type: 'history-failed', message: errorMessage(error) });
     }
-  }, [api]);
+  }, [applyLatest, fetchLatest]);
+
+  const refreshLatest = useCallback(() => {
+    if (streamController.current !== null) return;
+    void loadLatest();
+  }, [loadLatest]);
 
   useEffect(() => {
-    void loadLatest();
-    return () => streamController.current?.abort();
-  }, [loadLatest]);
+    let active = true;
+    void fetchLatest().then(
+      (page) => {
+        if (active) applyLatest(page);
+      },
+      (error) => {
+        if (active) {
+          dispatch({ type: 'history-failed', message: errorMessage(error) });
+        }
+      },
+    );
+    return () => {
+      active = false;
+      streamController.current?.abort();
+    };
+  }, [applyLatest, fetchLatest]);
+
+  const notifications = useNotifications({
+    api,
+    userId: user.id,
+    historyReady: historyReady && !state.historyLoading,
+    streamActive: state.pendingRequestId !== null,
+    onMessages: mergeNotificationMessages,
+    onError: reportNotificationError,
+  });
 
   const lastMessage = state.messages[state.messages.length - 1];
   useEffect(() => {
     if (lastMessage === undefined) return;
+    if (!nearEnd.current && state.pendingRequestId === null) return;
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
-  }, [lastMessage, state.activity]);
+  }, [lastMessage, state.activity, state.pendingRequestId]);
+
+  useEffect(() => {
+    if (targetMessageId === null) return;
+    const index = state.messages.findIndex(
+      (message) => message.id === targetMessageId,
+    );
+    if (index < 0) return;
+    requestAnimationFrame(() =>
+      listRef.current?.scrollToIndex({
+        animated: true,
+        index,
+        viewPosition: 0.5,
+      }),
+    );
+    const timer = setTimeout(() => setTargetMessageId(null), 3000);
+    return () => clearTimeout(timer);
+  }, [state.messages, targetMessageId]);
 
   const busy = state.sending || state.historyLoading;
-
   async function loadOlder() {
     if (state.nextBefore === null || state.historyLoading) return;
     dispatch({ type: 'history-loading' });
@@ -74,50 +268,81 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
     }
   }
 
-  async function sendContent(rawContent: string) {
-    const content = rawContent.trim();
-    if (content.length === 0 || busy || streamController.current !== null) return;
-
-    const clientMessageId = randomUUID();
+  async function runChatStream(
+    requestId: string,
+    start: () => void,
+    request: (
+      onEvent: (event: ChatStreamEvent) => void,
+      signal: AbortSignal,
+    ) => Promise<void>,
+  ) {
+    if (busy || streamController.current !== null) return;
     const controller = new AbortController();
     streamController.current = controller;
-    setDraft('');
-    dispatch({
-      type: 'send-started',
-      clientMessageId,
-      content,
-      now: new Date().toISOString(),
-    });
+    start();
 
     try {
-      await api.streamMessage(
-        clientMessageId,
-        content,
+      await request(
         (event) => dispatch({ type: 'stream-event', event }),
         controller.signal,
       );
     } catch (error) {
       if (controller.signal.aborted) {
-        dispatch({ type: 'send-cancelled' });
-      } else if (error instanceof ApiError && error.code === 'duplicate_client_message') {
-        dispatch({ type: 'send-rejected', clientMessageId, message: null });
-        await loadLatest();
-      } else if (error instanceof ApiError && error.code === 'active_agent_run') {
-        dispatch({
-          type: 'send-rejected',
-          clientMessageId,
-          message: '上一条回复仍在生成，请刷新聊天记录查看状态。',
-        });
+        dispatch({ type: 'request-cancelled' });
+      } else if (error instanceof ApiError) {
+        const refreshHistory =
+          error.code === 'duplicate_client_message' ||
+          error.code === 'chat_retry_not_allowed' ||
+          error.code === 'retry_message_not_found';
+        let message: string | null = errorMessage(error);
+        if (error.code === 'active_agent_run') {
+          message = '上一条回复仍在生成，请刷新聊天记录查看状态。';
+        } else if (refreshHistory) {
+          message = null;
+        }
+        dispatch({ type: 'request-rejected', requestId, message });
+        if (refreshHistory) await loadLatest();
       } else {
         dispatch({ type: 'transport-failed', message: errorMessage(error) });
       }
     } finally {
       if (streamController.current === controller) streamController.current = null;
+      await refreshHealthProfileCards();
     }
   }
 
+  async function sendContent(rawContent: string) {
+    const content = rawContent.trim();
+    if (attachment !== null) {
+      dispatch({
+        type: 'history-failed',
+        message: '附件已经选好，但服务器上传和报告分析还没有接通，暂时不能发送。',
+      });
+      return;
+    }
+    if (content.length === 0) return;
+
+    const clientMessageId = randomUUID();
+    await runChatStream(
+      clientMessageId,
+      () => {
+        setDraft('');
+        dispatch({
+          type: 'send-started',
+          clientMessageId,
+          content,
+          now: new Date().toISOString(),
+        });
+      },
+      (onEvent, signal) =>
+        api.streamMessage(clientMessageId, content, onEvent, signal),
+    );
+  }
+
   async function logout() {
+    setShowMenu(false);
     streamController.current?.abort();
+    healthConnect.stop();
     try {
       await api.logout();
       onSignedOut();
@@ -126,110 +351,205 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
     }
   }
 
-  function retry(index: number) {
-    for (let current = index - 1; current >= 0; current -= 1) {
-      const message = state.messages[current];
-      if (message.role === 'user') {
-        void sendContent(message.content);
+  function cancelCurrentResponse() {
+    streamController.current?.abort();
+  }
+
+  async function retry(failedAssistantMessageId: string) {
+    const message = state.messages[state.messages.length - 1];
+    if (
+      message?.id !== failedAssistantMessageId ||
+      message.role !== 'assistant' ||
+      (message.status !== 'failed' && message.status !== 'cancelled')
+    ) {
+      dispatch({ type: 'history-failed', message: '只能重试最后一条失败的回复。' });
+      return;
+    }
+
+    const localPrefix = 'local-assistant-';
+    if (failedAssistantMessageId.startsWith(localPrefix)) {
+      const clientMessageId = failedAssistantMessageId.slice(localPrefix.length);
+      const userMessage = state.messages.find(
+        (candidate) => candidate.id === `local-user-${clientMessageId}`,
+      );
+      if (userMessage?.role !== 'user') {
+        dispatch({ type: 'history-failed', message: '找不到这次发送的原消息。' });
         return;
       }
+      await runChatStream(
+        clientMessageId,
+        () =>
+          dispatch({
+            type: 'send-started',
+            clientMessageId,
+            content: userMessage.content,
+            now: new Date().toISOString(),
+          }),
+        (onEvent, signal) =>
+          api.streamMessage(clientMessageId, userMessage.content, onEvent, signal),
+      );
+      return;
     }
-    dispatch({ type: 'history-failed', message: '找不到这次回复对应的用户消息。' });
+
+    const requestId = randomUUID();
+    await runChatStream(
+      requestId,
+      () =>
+        dispatch({
+          type: 'retry-started',
+          requestId,
+          now: new Date().toISOString(),
+        }),
+      (onEvent, signal) =>
+        api.retryMessage(failedAssistantMessageId, onEvent, signal),
+    );
   }
 
   function renderMessage(message: ChatMessage, index: number) {
     const assistant = message.role === 'assistant';
     const canRetry =
-      assistant && (message.status === 'failed' || message.status === 'cancelled');
+      assistant &&
+      index === state.messages.length - 1 &&
+      (message.status === 'failed' || message.status === 'cancelled');
+    const previousMessage = state.messages[index - 1];
+    const showDate =
+      previousMessage === undefined ||
+      localDay(previousMessage.createdAt) !== localDay(message.createdAt);
 
     const showBubble = message.content.length > 0 || message.status !== 'generating';
     const activity =
       assistant && message.status === 'generating' ? state.activity : null;
 
     return (
-      <View
-        style={[
-          styles.messageRow,
-          assistant ? styles.assistantMessageRow : styles.userMessageRow,
-        ]}
-      >
+      <>
+        {showDate ? (
+          <View style={styles.dateDivider}>
+            <View style={styles.dateRule} />
+            <Text style={styles.dateText}>
+              {dayFormatter.format(new Date(message.createdAt))}
+            </Text>
+            <View style={styles.dateRule} />
+          </View>
+        ) : null}
         <View
           style={[
-            styles.messageContent,
-            assistant ? styles.assistantContent : undefined,
+            styles.messageRow,
+            assistant ? styles.assistantMessageRow : styles.userMessageRow,
           ]}
         >
-          {showBubble ? (
-            <View
-              style={[
-                styles.bubble,
-                assistant ? styles.assistantBubble : styles.userBubble,
-              ]}
-            >
-              <MessageSources
-                content={message.content || '无内容'}
-                onOpenError={(error) =>
-                  dispatch({ type: 'history-failed', message: error })
-                }
-                sources={
-                  assistant && message.status === 'completed' ? message.sources : []
-                }
-              />
-              {message.status === 'failed' ? (
-                <Text style={styles.failedStatus}>回复失败</Text>
-              ) : null}
-              {message.status === 'cancelled' ? (
-                <Text style={styles.cancelledStatus}>回复已取消</Text>
-              ) : null}
-              {canRetry ? (
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={busy}
-                  onPress={() => retry(index)}
-                  style={styles.retryButton}
-                >
-                  <Text style={styles.retryText}>重新发送</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-          {activity === null ? null : <ActivityStatus phase={activity} />}
+          <View
+            style={[
+              styles.messageContent,
+              assistant ? styles.assistantContent : styles.userContent,
+              message.id === targetMessageId ? styles.targetMessage : undefined,
+            ]}
+          >
+            {showBubble ? (
+              <View
+                style={[
+                  styles.bubble,
+                  assistant ? styles.assistantBubble : styles.userBubble,
+                ]}
+              >
+                <MessageSources
+                  content={message.content || '无内容'}
+                  onOpenError={(error) =>
+                    dispatch({ type: 'history-failed', message: error })
+                  }
+                  sources={
+                    assistant && message.status === 'completed'
+                      ? message.sources
+                      : []
+                  }
+                  tone={assistant ? 'assistant' : 'user'}
+                />
+                {!assistant || message.status !== 'completed' ? (
+                  <View style={styles.messageMeta}>
+                    <Text
+                      style={[
+                        styles.messageTime,
+                        assistant
+                          ? styles.assistantMessageTime
+                          : styles.userMessageTime,
+                      ]}
+                    >
+                      {timeFormatter.format(new Date(message.createdAt))}
+                    </Text>
+                    {message.status === 'failed' ? (
+                      <Text style={styles.failedStatus}>回复失败</Text>
+                    ) : null}
+                    {message.status === 'cancelled' ? (
+                      <Text style={styles.cancelledStatus}>已停止</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+                {canRetry ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void retry(message.id)}
+                    style={({ pressed }) => [
+                      styles.retryButton,
+                      pressed && styles.retryButtonPressed,
+                    ]}
+                  >
+                    <Text style={styles.retryText}>重新生成</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+            {activity === null ? null : <ActivityStatus phase={activity} />}
+          </View>
         </View>
-      </View>
+      </>
     );
   }
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={process.env.EXPO_OS === 'ios' ? 'padding' : 'height'}
       style={styles.screen}
     >
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>安糖心语</Text>
-          <Text style={styles.username}>{user.username}</Text>
-        </View>
-        <View style={styles.headerActions}>
+      <SafeAreaView edges={['top']} style={styles.headerSafeArea}>
+        <View style={styles.header}>
           <Pressable
+            accessibilityLabel="打开菜单"
             accessibilityRole="button"
-            disabled={state.pendingClientMessageId !== null || state.historyLoading}
-            onPress={() => void loadLatest()}
+            onPress={() => setShowMenu(true)}
+            style={({ pressed }) => [
+              styles.headerButton,
+              pressed && styles.headerButtonPressed,
+            ]}
           >
-            <Text
-              style={[
-                styles.headerAction,
-                (state.pendingClientMessageId !== null || state.historyLoading) &&
-                  styles.headerActionDisabled,
-              ]}
-            >
-              刷新
-            </Text>
+            <AppIcon icon={Menu01Icon} size={25} />
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={() => void logout()}>
-            <Text style={styles.headerAction}>退出</Text>
-          </Pressable>
+
+          <View style={styles.headerIdentity}>
+            <Text style={styles.title}>安糖心语</Text>
+          </View>
+
+          <View style={styles.headerPlaceholder} />
         </View>
-      </View>
+      </SafeAreaView>
+
+      {!healthConnect.connected || healthConnect.error !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            if (healthConnect.connected) setShowCareSettings(true);
+            else void healthConnect.connect();
+          }}
+          style={styles.healthNotice}
+        >
+          <Text style={styles.healthNoticeText}>
+            {healthConnect.error ??
+              '连接 Health Connect 后，可以在对话中查看真实手环记录。'}
+          </Text>
+          <Text style={styles.healthNoticeAction}>
+            {healthConnect.connected ? '查看' : '去连接'}
+          </Text>
+        </Pressable>
+      ) : null}
 
       {state.error === null ? null : (
         <Pressable
@@ -237,26 +557,49 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           onPress={() => dispatch({ type: 'clear-error' })}
           style={styles.errorBanner}
         >
-          <Text style={styles.errorText}>{state.error}</Text>
+          <View style={styles.errorDot} />
+          <Text selectable style={styles.errorText}>
+            {state.error}
+          </Text>
           <Text style={styles.dismissText}>关闭</Text>
         </Pressable>
       )}
 
+      {showNewMessage ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            nearEnd.current = true;
+            setShowNewMessage(false);
+            listRef.current?.scrollToEnd({ animated: true });
+          }}
+          style={styles.newMessageBanner}
+        >
+          <View style={styles.newMessageDot} />
+          <Text style={styles.newMessageText}>有一条新消息</Text>
+        </Pressable>
+      ) : null}
+
       <FlatList
         ref={listRef}
         contentContainerStyle={styles.messageList}
+        contentInsetAdjustmentBehavior="automatic"
         data={state.messages}
         keyboardShouldPersistTaps="handled"
         keyExtractor={(item) => item.id}
         ListEmptyComponent={
           state.historyLoading ? (
             <View style={styles.emptyState}>
-              <ActivityIndicator color="#15966A" />
+              <ActivityIndicator color={colors.primary} />
+              <Text style={styles.emptyLoadingText}>正在读取对话</Text>
             </View>
           ) : (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>今天感觉怎么样？</Text>
-              <Text style={styles.emptyText}>可以从最近一次担心低血糖的时刻说起。</Text>
+              <BrandMark size={48} />
+              <Text style={styles.emptyTitle}>有什么想和我聊聊？</Text>
+              <Text style={styles.emptyText}>
+                可以问健康问题，也可以说说最近让你担心的事。
+              </Text>
             </View>
           )
         }
@@ -266,42 +609,252 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
               accessibilityRole="button"
               disabled={state.historyLoading}
               onPress={() => void loadOlder()}
-              style={styles.olderButton}
+              style={({ pressed }) => [
+                styles.olderButton,
+                pressed && styles.olderButtonPressed,
+              ]}
             >
               <Text style={styles.olderText}>
-                {state.historyLoading ? '正在加载…' : '加载更早消息'}
+                {state.historyLoading ? '正在加载…' : '再往前看看'}
               </Text>
             </Pressable>
           )
         }
+        ListFooterComponent={
+          <View style={styles.profileCards}>
+            <HealthProfileCards
+              actingCardId={healthProfileCards.actingCardId}
+              cards={healthProfileCards.cards}
+              error={healthProfileCards.error}
+              loading={healthProfileCards.loading}
+              onAnswer={(cardId, answer) =>
+                void healthProfileCards.answer(cardId, answer)
+              }
+            />
+          </View>
+        }
+        onRefresh={
+          state.pendingRequestId === null ? refreshLatest : undefined
+        }
+        onScroll={({ nativeEvent }) => {
+          const distanceFromEnd =
+            nativeEvent.contentSize.height -
+            nativeEvent.layoutMeasurement.height -
+            nativeEvent.contentOffset.y;
+          nearEnd.current = distanceFromEnd < 80;
+          if (nearEnd.current && showNewMessage) setShowNewMessage(false);
+        }}
+        onScrollToIndexFailed={({ averageItemLength, index }) => {
+          listRef.current?.scrollToOffset({
+            animated: true,
+            offset: averageItemLength * index,
+          });
+        }}
+        refreshing={historyReady && state.historyLoading}
         renderItem={({ item, index }) => renderMessage(item, index)}
+        scrollEventThrottle={100}
       />
 
-      <View style={styles.composer}>
-        <TextInput
-          editable={!busy}
-          maxLength={2000}
-          multiline
-          onChangeText={setDraft}
-          placeholder={busy ? '请稍候…' : '说点什么……'}
-          placeholderTextColor="#8A918E"
-          style={styles.input}
-          value={draft}
+      <SafeAreaView edges={['bottom']} style={styles.composerSafeArea}>
+        {!keyboardVisible && state.pendingRequestId === null ? (
+          <View style={styles.quickActions}>
+            <Pressable
+              accessibilityLabel="报告解读"
+              accessibilityRole="button"
+              onPress={() => setShowReportPicker(true)}
+              style={({ pressed }) => [
+                styles.quickAction,
+                pressed && styles.quickActionPressed,
+              ]}
+            >
+              <AppIcon color={colors.primaryPressed} icon={FileChartLineIcon} size={20} />
+              <Text style={styles.quickActionText}>报告解读</Text>
+            </Pressable>
+            <Pressable
+              accessibilityLabel="健康档案"
+              accessibilityRole="button"
+              onPress={() => setShowHealthOverview(true)}
+              style={({ pressed }) => [
+                styles.quickAction,
+                pressed && styles.quickActionPressed,
+              ]}
+            >
+              <AppIcon color={colors.primaryPressed} icon={FolderHeartIcon} size={20} />
+              <Text style={styles.quickActionText}>健康档案</Text>
+            </Pressable>
+            <Pressable
+              accessibilityLabel="拍照"
+              accessibilityRole="button"
+              onPress={() => setShowCamera(true)}
+              style={({ pressed }) => [
+                styles.quickAction,
+                pressed && styles.quickActionPressed,
+              ]}
+            >
+              <AppIcon color={colors.primaryPressed} icon={Camera01Icon} size={20} />
+              <Text style={styles.quickActionText}>拍照</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {attachment === null ? null : (
+          <View style={styles.attachmentPreview}>
+            <AttachmentPreview
+              attachment={attachment}
+              onRemove={() => setAttachment(null)}
+            />
+          </View>
+        )}
+        <View style={styles.composer}>
+          <Pressable
+            accessibilityLabel="添加文件"
+            accessibilityRole="button"
+            disabled={busy}
+            onPress={() => setShowReportPicker(true)}
+            style={({ pressed }) => [
+              styles.attachmentButton,
+              pressed && styles.sendButtonPressed,
+            ]}
+          >
+            <AppIcon color={colors.muted} icon={Attachment01Icon} size={22} />
+          </Pressable>
+          <TextInput
+            ref={inputRef}
+            editable={!busy}
+            maxLength={2000}
+            multiline
+            onChangeText={setDraft}
+            placeholder={
+              state.pendingRequestId !== null
+                ? '正在回复…'
+                : state.historyLoading
+                  ? '正在读取对话…'
+                  : '输入健康问题或说说近况…'
+            }
+            placeholderTextColor={colors.faint}
+            style={styles.input}
+            value={draft}
+          />
+          <Pressable
+            accessibilityLabel={
+              state.pendingRequestId !== null ? '停止生成回复' : '发送消息'
+            }
+            accessibilityRole="button"
+            disabled={
+              state.pendingRequestId === null &&
+              (draft.trim().length === 0 && attachment === null ||
+                state.historyLoading)
+            }
+            onPress={
+              state.pendingRequestId !== null
+                ? cancelCurrentResponse
+                : () => void sendContent(draft)
+            }
+            style={({ pressed }) => [
+              styles.sendButton,
+              state.pendingRequestId === null &&
+                (draft.trim().length === 0 && attachment === null ||
+                  state.historyLoading) &&
+                styles.sendButtonDisabled,
+              pressed && styles.sendButtonPressed,
+            ]}
+          >
+            <AppIcon
+              color={colors.white}
+              icon={state.pendingRequestId !== null ? StopIcon : ArrowUp01Icon}
+              size={state.pendingRequestId !== null ? 18 : 22}
+            />
+          </Pressable>
+        </View>
+      </SafeAreaView>
+
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setShowCamera(false)}
+        presentationStyle="fullScreen"
+        visible={showCamera}
+      >
+        <CameraScreen
+          onClose={() => setShowCamera(false)}
+          onError={(message) => {
+            setShowCamera(false);
+            dispatch({ type: 'history-failed', message });
+          }}
+          onUsePhoto={(value) => {
+            setAttachment(value);
+            setShowCamera(false);
+          }}
         />
-        <Pressable
-          accessibilityLabel="发送消息"
-          accessibilityRole="button"
-          disabled={draft.trim().length === 0 || busy}
-          onPress={() => void sendContent(draft)}
-          style={({ pressed }) => [
-            styles.sendButton,
-            (draft.trim().length === 0 || busy) && styles.sendButtonDisabled,
-            pressed && !busy && styles.sendButtonPressed,
-          ]}
-        >
-          <Text style={styles.sendButtonText}>发送</Text>
-        </Pressable>
-      </View>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setShowReportPicker(false)}
+        presentationStyle="fullScreen"
+        visible={showReportPicker}
+      >
+        <ReportPickerScreen
+          onClose={() => setShowReportPicker(false)}
+          onError={(message) => {
+            setShowReportPicker(false);
+            dispatch({ type: 'history-failed', message });
+          }}
+          onPicked={(value) => {
+            setAttachment(value);
+            setShowReportPicker(false);
+          }}
+        />
+      </Modal>
+
+      {showCareSettings ? (
+        <CareSettingsModal
+          api={api}
+          backgroundHealthDisabling={healthConnect.backgroundDisabling}
+          backgroundHealthEnabling={healthConnect.backgroundEnabling}
+          backgroundHealthError={healthConnect.backgroundError}
+          backgroundHealthStatus={healthConnect.backgroundStatus}
+          notificationPermission={notifications.permission}
+          notificationRegistrationFailed={notifications.registrationFailed}
+          notificationRequesting={notifications.requestingPermission}
+          onClose={() => setShowCareSettings(false)}
+          onDisableBackgroundHealth={healthConnect.disableBackground}
+          onEnableBackgroundHealth={healthConnect.enableBackground}
+          onLogout={() => void logout()}
+          onRequestNotificationPermission={notifications.requestPermission}
+          visible
+        />
+      ) : null}
+
+      <Modal
+        animationType="slide"
+        onRequestClose={() => setShowHealthOverview(false)}
+        presentationStyle="fullScreen"
+        visible={showHealthOverview}
+      >
+        <HealthOverviewScreen
+          api={api}
+          onClose={() => setShowHealthOverview(false)}
+          onProfileChanged={() => void refreshHealthProfileCards()}
+        />
+      </Modal>
+
+      <AppMenu
+        conversations={conversationAnchors}
+        onClose={() => setShowMenu(false)}
+        onOpenHealth={() => {
+          setShowMenu(false);
+          setShowHealthOverview(true);
+        }}
+        onOpenSettings={() => {
+          setShowMenu(false);
+          setShowCareSettings(true);
+        }}
+        onSelectConversation={(messageId) => {
+          setTargetMessageId(messageId);
+          setShowMenu(false);
+        }}
+        username={user.username}
+        visible={showMenu}
+      />
 
       <ExpoStatusBar style="dark" />
     </KeyboardAvoidingView>
@@ -311,97 +864,324 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
-    backgroundColor: '#F7F9F8',
+    backgroundColor: colors.background,
+  },
+  headerSafeArea: {
+    backgroundColor: colors.paper,
   },
   header: {
+    minHeight: 60,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 12,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#DDE3E0',
-    backgroundColor: '#FFFFFF',
+    borderBottomColor: colors.line,
+    backgroundColor: colors.paper,
   },
-  title: { color: '#15201B', fontSize: 20, fontWeight: '700' },
-  username: { marginTop: 2, color: '#65716B', fontSize: 12 },
-  headerActions: { flexDirection: 'row', gap: 18 },
-  headerAction: { color: '#157D5B', fontSize: 14, fontWeight: '600' },
-  headerActionDisabled: { color: '#A7B0AC' },
+  headerButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
+  },
+  headerButtonPressed: { opacity: 0.65 },
+  headerIdentity: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 20,
+  },
+  headerPlaceholder: { width: 44, height: 44 },
+  healthNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    backgroundColor: colors.primarySoft,
+  },
+  healthNoticeText: {
+    flex: 1,
+    color: colors.text,
+    fontFamily: typefaces.sans,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  healthNoticeAction: {
+    color: colors.primaryPressed,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 11,
+  },
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#FBE9E7',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    backgroundColor: colors.dangerSoft,
   },
-  errorText: { flex: 1, color: '#8D3434', fontSize: 13, lineHeight: 18 },
-  dismissText: { marginLeft: 12, color: '#8D3434', fontSize: 13, fontWeight: '600' },
-  messageList: { flexGrow: 1, paddingHorizontal: 16, paddingVertical: 18 },
-  olderButton: { alignItems: 'center', paddingVertical: 10, marginBottom: 10 },
-  olderText: { color: '#65716B', fontSize: 13 },
+  errorDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.danger,
+  },
+  errorText: {
+    flex: 1,
+    color: colors.danger,
+    fontFamily: typefaces.sans,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  dismissText: {
+    color: colors.danger,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 12,
+  },
+  newMessageBanner: {
+    position: 'absolute',
+    zIndex: 2,
+    top: 72,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primaryPressed,
+    boxShadow: '0 5px 18px rgba(24, 58, 49, 0.18)',
+  },
+  newMessageDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.white,
+  },
+  newMessageText: {
+    color: colors.paper,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 12,
+  },
+  messageList: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.lg,
+  },
+  olderButton: {
+    alignSelf: 'center',
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.line,
+    borderRadius: radii.pill,
+    backgroundColor: colors.paper,
+  },
+  olderButtonPressed: { opacity: 0.64 },
+  olderText: {
+    color: colors.muted,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 11,
+  },
+  profileCards: { paddingTop: spacing.xs },
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
+    minHeight: 430,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xxl,
   },
-  emptyTitle: { color: '#23312A', fontSize: 21, fontWeight: '600' },
-  emptyText: {
-    marginTop: 10,
-    color: '#718078',
-    fontSize: 15,
-    lineHeight: 22,
+  emptyLoadingText: {
+    paddingTop: spacing.sm,
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 12,
+  },
+  emptyTitle: {
+    paddingTop: spacing.md,
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 24,
     textAlign: 'center',
   },
-  messageRow: { flexDirection: 'row', marginBottom: 12 },
+  emptyText: {
+    maxWidth: 330,
+    paddingTop: spacing.sm,
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 15,
+    lineHeight: 23,
+    textAlign: 'center',
+  },
+  dateDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+  },
+  dateRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.line },
+  dateText: {
+    color: colors.faint,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 10,
+  },
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+  },
   userMessageRow: { justifyContent: 'flex-end' },
   assistantMessageRow: { justifyContent: 'flex-start' },
-  messageContent: { maxWidth: '82%' },
-  assistantContent: { gap: 8 },
-  bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
-  userBubble: { backgroundColor: '#BDEED8', borderBottomRightRadius: 5 },
-  assistantBubble: { backgroundColor: '#FFFFFF', borderBottomLeftRadius: 5 },
-  failedStatus: { marginTop: 6, color: '#A43B3B', fontSize: 12 },
-  cancelledStatus: { marginTop: 6, color: '#79654B', fontSize: 12 },
-  retryButton: { alignSelf: 'flex-start', marginTop: 7 },
-  retryText: { color: '#157D5B', fontSize: 13, fontWeight: '600' },
+  messageContent: { maxWidth: '84%' },
+  userContent: { alignItems: 'flex-end' },
+  targetMessage: {
+    borderWidth: 2,
+    borderColor: colors.primary,
+    borderRadius: radii.lg,
+  },
+  assistantContent: { width: '100%', maxWidth: '100%', gap: spacing.xs },
+  bubble: {
+    minWidth: 82,
+    paddingHorizontal: 15,
+    paddingTop: 12,
+    paddingBottom: 8,
+    borderRadius: radii.lg,
+    borderCurve: 'continuous',
+  },
+  userBubble: {
+    borderBottomRightRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  assistantBubble: {
+    paddingHorizontal: spacing.xs,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+  },
+  messageMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: spacing.xs,
+    paddingTop: 5,
+  },
+  messageTime: {
+    fontFamily: typefaces.sans,
+    fontSize: 9,
+    fontVariant: ['tabular-nums'],
+  },
+  assistantMessageTime: { color: colors.faint },
+  userMessageTime: { color: '#D9FFF4' },
+  failedStatus: {
+    color: colors.danger,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 10,
+  },
+  cancelledStatus: {
+    color: colors.coralPressed,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 10,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+  },
+  retryButtonPressed: { opacity: 0.65 },
+  retryText: {
+    color: colors.primary,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 11,
+  },
+  composerSafeArea: {
+    backgroundColor: colors.background,
+  },
+  quickActions: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+  },
+  quickAction: {
+    minHeight: 42,
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+  },
+  quickActionPressed: { opacity: 0.7, transform: [{ scale: 0.98 }] },
+  quickActionText: {
+    color: colors.primaryPressed,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 13,
+  },
+  attachmentPreview: {
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#DDE3E0',
-    backgroundColor: '#FFFFFF',
+    gap: spacing.xs,
+    marginHorizontal: spacing.sm,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    padding: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.line,
+    borderRadius: radii.xl,
+    borderCurve: 'continuous',
+    backgroundColor: colors.paper,
+  },
+  attachmentButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
   },
   input: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 46,
     maxHeight: 120,
-    paddingHorizontal: 15,
-    paddingTop: 11,
-    paddingBottom: 11,
-    color: '#17211C',
+    paddingHorizontal: spacing.xs,
+    paddingTop: 12,
+    paddingBottom: 10,
+    color: colors.text,
+    fontFamily: typefaces.sans,
     fontSize: 16,
-    lineHeight: 21,
-    borderRadius: 22,
-    backgroundColor: '#F2F5F3',
+    lineHeight: 22,
+    borderWidth: 0,
+    backgroundColor: colors.paper,
   },
   sendButton: {
-    height: 44,
-    minWidth: 62,
+    width: 42,
+    height: 42,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 15,
-    borderRadius: 22,
-    backgroundColor: '#15966A',
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary,
   },
-  sendButtonDisabled: { backgroundColor: '#B9C4BF' },
-  sendButtonPressed: { opacity: 0.75 },
-  sendButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
+  sendButtonDisabled: { backgroundColor: colors.disabled },
+  sendButtonPressed: { opacity: 0.7, transform: [{ scale: 0.96 }] },
 });

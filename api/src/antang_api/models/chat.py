@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
@@ -108,7 +109,7 @@ class Message(Base):
 
 
 class AgentRun(Base):
-    """记录某个 Agent 为一条用户消息执行的一次工作。
+    """记录某个 Agent 为用户消息或服务器关怀任务执行的一次工作。
 
     一条用户消息以后可能对应 Core Agent、Auditor 和多个 Sub-agent，
     每个 Agent 都会拥有自己的运行记录。
@@ -118,12 +119,35 @@ class AgentRun(Base):
     __table_args__ = (
         Index("ix_agent_runs_user_id_id", "user_id", "id"),
         Index(
+            "uq_agent_runs_parent_agent_name",
+            "parent_run_id",
+            "agent_name",
+            unique=True,
+            postgresql_where=text("parent_run_id IS NOT NULL"),
+        ),
+        Index(
             "uq_agent_runs_active_root_user",
             "user_id",
             unique=True,
             postgresql_where=text(
-                "parent_run_id IS NULL AND status IN ('running', 'waiting_for_user')"
-            ),  # 每个用户同时只能有 1 个"活跃中的根 Agent"
+                "parent_run_id IS NULL "
+                "AND agent_name = 'core_agent' "
+                "AND status IN ('running', 'waiting_for_user')"
+            ),
+        ),
+        Index(
+            "uq_agent_runs_active_care_task_agent",
+            "trigger_care_task_id",
+            "agent_name",
+            unique=True,
+            postgresql_where=text(
+                "trigger_care_task_id IS NOT NULL "
+                "AND status IN ('running', 'waiting_for_user')"
+            ),
+        ),
+        CheckConstraint(
+            "num_nonnulls(trigger_message_id, trigger_care_task_id) = 1",
+            name="ck_agent_runs_exactly_one_trigger",
         ),
     )
     # 这次运行的唯一 ID
@@ -138,9 +162,15 @@ class AgentRun(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
     )
 
-    # 哪条用户消息触发了这次运行
-    trigger_message_id: Mapped[UUID] = mapped_column(
+    # Core 或现有子 Agent 由真实用户消息触发。
+    trigger_message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    # 主动关怀及其 Auditor 由服务器中的持久关怀任务触发。
+    trigger_care_task_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("proactive_care_tasks.id", ondelete="CASCADE"),
         index=True,
     )
 
@@ -153,6 +183,17 @@ class AgentRun(Base):
     # 调用了这个 AgentRun 的父 AgentRun 的ID，如果没有父AgentRun则为None，比如Core Agent调用了Memory Sub-agent
     parent_run_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        index=True,
+    )
+
+    # 创建子 AgentRun 的那次父工具调用。它与 parent_run_id 一起让委派可审计、可去重。
+    parent_tool_call_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "agent_tool_calls.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_agent_runs_parent_tool_call_id_agent_tool_calls",
+        ),
         index=True,
     )
 

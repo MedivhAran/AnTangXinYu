@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 
 import type { AgentActivityPhase } from '../api/types';
+import { colors, radii, spacing, typefaces } from '../ui/theme';
 
 const labels: Record<AgentActivityPhase, string> = {
   thinking: '正在思考',
@@ -92,7 +93,11 @@ export function ActivityStatus({ phase }: Props) {
         ]}
       >
         <LinearGradient
-          colors={['rgba(255,255,255,0)', '#FFFFFF', 'rgba(255,255,255,0)']}
+          colors={[
+            'rgba(255,252,246,0)',
+            colors.paper,
+            'rgba(255,252,246,0)',
+          ]}
           end={{ x: 1, y: 0 }}
           start={{ x: 0, y: 0 }}
           style={StyleSheet.absoluteFill}
@@ -112,10 +117,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'flex-start',
     overflow: 'hidden',
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 17,
-    backgroundColor: '#E8ECEA',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.line,
+    borderRadius: radii.pill,
+    backgroundColor: colors.paperMuted,
   },
   shimmer: {
     position: 'absolute',
@@ -128,13 +136,12 @@ const styles = StyleSheet.create({
   dot: {
     width: 6,
     height: 6,
-    marginRight: 8,
     borderRadius: 3,
-    backgroundColor: '#7B8781',
+    backgroundColor: colors.coral,
   },
   label: {
-    color: '#626D68',
+    color: colors.muted,
+    fontFamily: typefaces.sansMedium,
     fontSize: 13,
-    fontWeight: '500',
   },
 });

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeAlias
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -10,6 +10,12 @@ from antang_api.models import MessageRole, MessageStatus
 MessageContent = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
+]
+ActivityPhase: TypeAlias = Literal[
+    "thinking",
+    "searching",
+    "reading",
+    "organizing",
 ]
 
 
@@ -44,7 +50,7 @@ class AgentActivityEvent(BaseModel):
     """事件：Core Agent 当前正在执行的用户可理解阶段。"""
 
     type: Literal["agent_activity"] = "agent_activity"
-    phase: Literal["thinking", "searching", "reading", "organizing"]
+    phase: ActivityPhase
 
 
 class ChatSource(BaseModel):

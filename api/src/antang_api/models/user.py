@@ -37,6 +37,12 @@ class LoginSession(Base):
 
     refresh_token_hash: Mapped[str] = mapped_column(String(64), unique=True)
 
+    # Refresh 轮换形成一条单向链，确保旧 token 仍能退出刚创建的后继会话。
+    replaced_by_session_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("login_sessions.id", ondelete="SET NULL"),
+        unique=True,
+    )
+
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

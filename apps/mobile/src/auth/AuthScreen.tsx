@@ -1,10 +1,11 @@
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -14,8 +15,12 @@ import {
 
 import { type ApiClient, errorMessage } from '../api/client';
 import type { User } from '../api/types';
+import { BrandMark } from '../ui/brand-mark';
+import { AppIcon } from '../ui/icon';
+import { colors, radii, spacing, typefaces } from '../ui/theme';
 
 type AuthMode = 'login' | 'register';
+type FocusedField = 'username' | 'password' | null;
 
 type Props = {
   api: ApiClient;
@@ -29,6 +34,8 @@ export function AuthScreen({ api, initialMessage, onAuthenticated }: Props) {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(initialMessage ?? null);
+  const [focusedField, setFocusedField] = useState<FocusedField>(null);
+  const passwordInput = useRef<TextInput>(null);
 
   const canSubmit =
     username.trim().length >= 3 && password.length >= 8 && !submitting;
@@ -59,77 +66,200 @@ export function AuthScreen({ api, initialMessage, onAuthenticated }: Props) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={process.env.EXPO_OS === 'ios' ? 'padding' : 'height'}
       style={styles.screen}
     >
-      <View style={styles.card}>
-        <Text style={styles.brand}>安糖心语</Text>
-        <Text style={styles.intro}>在这里，慢慢说出你对低血糖的担心。</Text>
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        pointerEvents="none"
+        style={styles.greenWash}
+      />
 
-        <View style={styles.modeRow}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => switchMode('login')}
-            style={[styles.modeButton, mode === 'login' && styles.modeButtonActive]}
-          >
-            <Text style={[styles.modeText, mode === 'login' && styles.modeTextActive]}>
-              登录
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.content}>
+          <View style={styles.hero}>
+            <BrandMark size={54} />
+            <Text accessibilityRole="header" selectable style={styles.brand}>
+              安糖心语
             </Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => switchMode('register')}
-            style={[styles.modeButton, mode === 'register' && styles.modeButtonActive]}
-          >
-            <Text
-              style={[styles.modeText, mode === 'register' && styles.modeTextActive]}
+            <Text selectable style={styles.heroText}>
+              登录后继续对话和健康记录
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <View style={styles.cardHeading}>
+              <Text accessibilityRole="header" selectable style={styles.cardTitle}>
+                {mode === 'login' ? '欢迎回来' : '从今天开始'}
+              </Text>
+              <Text selectable style={styles.cardIntro}>
+                {mode === 'login'
+                  ? '输入账号信息进入应用。'
+                  : '创建账号后即可开始使用。'}
+              </Text>
+            </View>
+
+            <View accessibilityLabel="账号方式" style={styles.modeRow}>
+              <Pressable
+                accessibilityLabel="切换到登录"
+                accessibilityRole="tab"
+                accessibilityState={{ selected: mode === 'login' }}
+                hitSlop={4}
+                onPress={() => switchMode('login')}
+                style={({ pressed }) => [
+                  styles.modeButton,
+                  mode === 'login' && styles.modeButtonActive,
+                  pressed && styles.modeButtonPressed,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.modeText,
+                    mode === 'login' && styles.modeTextActive,
+                  ]}
+                >
+                  登录
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="切换到注册"
+                accessibilityRole="tab"
+                accessibilityState={{ selected: mode === 'register' }}
+                hitSlop={4}
+                onPress={() => switchMode('register')}
+                style={({ pressed }) => [
+                  styles.modeButton,
+                  mode === 'register' && styles.modeButtonActive,
+                  pressed && styles.modeButtonPressed,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.modeText,
+                    mode === 'register' && styles.modeTextActive,
+                  ]}
+                >
+                  注册
+                </Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.fields}>
+              <View style={styles.field}>
+                <View style={styles.labelRow}>
+                  <Text nativeID="username-label" style={styles.label}>
+                    用户名
+                  </Text>
+                  <Text style={styles.requirement}>至少 3 个字符</Text>
+                </View>
+                <TextInput
+                  accessibilityLabel="用户名"
+                  autoCapitalize="none"
+                  autoComplete={mode === 'login' ? 'username' : 'username-new'}
+                  autoCorrect={false}
+                  maxLength={32}
+                  onBlur={() => setFocusedField(null)}
+                  onChangeText={setUsername}
+                  onFocus={() => setFocusedField('username')}
+                  onSubmitEditing={() => passwordInput.current?.focus()}
+                  placeholder="请输入用户名"
+                  placeholderTextColor={colors.faint}
+                  returnKeyType="next"
+                  style={[
+                    styles.input,
+                    focusedField === 'username' && styles.inputFocused,
+                  ]}
+                  textContentType="username"
+                  value={username}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <View style={styles.labelRow}>
+                  <Text nativeID="password-label" style={styles.label}>
+                    密码
+                  </Text>
+                  <Text style={styles.requirement}>至少 8 个字符</Text>
+                </View>
+                <TextInput
+                  ref={passwordInput}
+                  accessibilityLabel="密码"
+                  autoCapitalize="none"
+                  autoComplete={
+                    mode === 'login' ? 'current-password' : 'new-password'
+                  }
+                  maxLength={128}
+                  onBlur={() => setFocusedField(null)}
+                  onChangeText={setPassword}
+                  onFocus={() => setFocusedField('password')}
+                  onSubmitEditing={() => void submit()}
+                  placeholder="请输入密码"
+                  placeholderTextColor={colors.faint}
+                  returnKeyType="done"
+                  secureTextEntry
+                  style={[
+                    styles.input,
+                    focusedField === 'password' && styles.inputFocused,
+                  ]}
+                  textContentType={
+                    mode === 'login' ? 'password' : 'newPassword'
+                  }
+                  value={password}
+                />
+              </View>
+            </View>
+
+            {error === null ? null : (
+              <View
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+                style={styles.errorBox}
+              >
+                <View style={styles.errorDot} />
+                <Text selectable style={styles.error}>
+                  {error}
+                </Text>
+              </View>
+            )}
+
+            <Pressable
+              accessibilityLabel={
+                submitting
+                  ? '正在提交'
+                  : mode === 'login'
+                    ? '登录并进入安糖心语'
+                    : '创建安糖心语账号'
+              }
+              accessibilityRole="button"
+              accessibilityState={{ busy: submitting, disabled: !canSubmit }}
+              disabled={!canSubmit}
+              onPress={() => void submit()}
+              style={({ pressed }) => [
+                styles.submitButton,
+                !canSubmit && styles.submitButtonDisabled,
+                pressed && canSubmit && styles.submitButtonPressed,
+              ]}
             >
-              注册
-            </Text>
-          </Pressable>
+              {submitting ? (
+                <ActivityIndicator color={colors.paper} />
+              ) : (
+                <>
+                  <Text style={styles.submitText}>
+                    {mode === 'login' ? '进入安糖心语' : '创建账号'}
+                  </Text>
+                  <AppIcon color={colors.paper} icon={ArrowRight01Icon} size={20} />
+                </>
+              )}
+            </Pressable>
+          </View>
         </View>
-
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          maxLength={32}
-          onChangeText={setUsername}
-          placeholder="用户名（至少 3 个字符）"
-          placeholderTextColor="#8A918E"
-          style={styles.input}
-          value={username}
-        />
-        <TextInput
-          autoCapitalize="none"
-          maxLength={128}
-          onChangeText={setPassword}
-          onSubmitEditing={() => void submit()}
-          placeholder="密码（至少 8 个字符）"
-          placeholderTextColor="#8A918E"
-          secureTextEntry
-          style={styles.input}
-          value={password}
-        />
-
-        {error === null ? null : <Text style={styles.error}>{error}</Text>}
-
-        <Pressable
-          accessibilityRole="button"
-          disabled={!canSubmit}
-          onPress={() => void submit()}
-          style={({ pressed }) => [
-            styles.submitButton,
-            !canSubmit && styles.submitButtonDisabled,
-            pressed && canSubmit && styles.submitButtonPressed,
-          ]}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.submitText}>{mode === 'login' ? '登录' : '注册'}</Text>
-          )}
-        </Pressable>
-      </View>
+      </ScrollView>
       <ExpoStatusBar style="dark" />
     </KeyboardAvoidingView>
   );
@@ -138,84 +268,191 @@ export function AuthScreen({ api, initialMessage, onAuthenticated }: Props) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    justifyContent: 'center',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
-    paddingHorizontal: 24,
-    backgroundColor: '#F7F9F8',
+    overflow: 'hidden',
+    backgroundColor: colors.background,
   },
-  card: {
-    padding: 24,
-    borderRadius: 26,
-    backgroundColor: '#FFFFFF',
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingTop:
+      (process.env.EXPO_OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0) +
+      spacing.xl,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
+  },
+  content: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    gap: spacing.xl,
+  },
+  greenWash: {
+    position: 'absolute',
+    width: 172,
+    height: 172,
+    bottom: -86,
+    left: -82,
+    backgroundColor: colors.primarySoft,
+    borderRadius: 86,
+    opacity: 0.72,
+  },
+  hero: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
   },
   brand: {
-    color: '#15201B',
-    fontSize: 28,
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 27,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  heroText: {
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 14,
+  },
+  card: {
+    gap: spacing.lg,
+    padding: spacing.xl,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radii.xl,
+    borderCurve: 'continuous',
+    backgroundColor: colors.paper,
+    boxShadow: '0 10px 28px rgba(23, 48, 46, 0.07)',
+  },
+  cardHeading: {
+    gap: spacing.xxs,
+  },
+  cardTitle: {
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 23,
     fontWeight: '700',
   },
-  intro: {
-    marginTop: 9,
-    color: '#65716B',
-    fontSize: 15,
-    lineHeight: 22,
+  cardIntro: {
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 14,
+    lineHeight: 21,
   },
   modeRow: {
     flexDirection: 'row',
-    marginTop: 26,
-    marginBottom: 14,
-    padding: 4,
-    borderRadius: 20,
-    backgroundColor: '#F1F5F3',
+    gap: spacing.xxs,
+    padding: spacing.xxs,
+    borderRadius: radii.md,
+    borderCurve: 'continuous',
+    backgroundColor: colors.paperMuted,
   },
   modeButton: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 9,
-    borderRadius: 16,
+    justifyContent: 'center',
+    minHeight: 42,
+    borderRadius: radii.sm,
+    borderCurve: 'continuous',
   },
   modeButtonActive: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.paper,
+    boxShadow: '0 2px 8px rgba(39, 60, 53, 0.08)',
+  },
+  modeButtonPressed: {
+    opacity: 0.72,
   },
   modeText: {
-    color: '#6A756F',
+    color: colors.muted,
+    fontFamily: typefaces.sansMedium,
     fontSize: 15,
-    fontWeight: '600',
   },
   modeTextActive: {
-    color: '#157D5B',
+    color: colors.primary,
+  },
+  fields: {
+    gap: spacing.md,
+  },
+  field: {
+    gap: spacing.xs,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: 2,
+  },
+  label: {
+    color: colors.text,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 14,
+  },
+  requirement: {
+    color: colors.faint,
+    fontFamily: typefaces.sans,
+    fontSize: 11,
   },
   input: {
-    height: 50,
-    marginTop: 12,
-    paddingHorizontal: 16,
-    color: '#17211C',
+    minHeight: 54,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    color: colors.ink,
+    fontFamily: typefaces.sans,
     fontSize: 16,
-    borderRadius: 16,
-    backgroundColor: '#F2F5F3',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radii.md,
+    borderCurve: 'continuous',
+    backgroundColor: colors.white,
+  },
+  inputFocused: {
+    borderColor: colors.primary,
+    backgroundColor: colors.paper,
+    boxShadow: '0 0 0 3px rgba(29, 91, 73, 0.10)',
+  },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    backgroundColor: colors.dangerSoft,
+  },
+  errorDot: {
+    width: 7,
+    height: 7,
+    marginTop: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.danger,
   },
   error: {
-    marginTop: 14,
-    color: '#A43B3B',
+    flex: 1,
+    color: colors.danger,
+    fontFamily: typefaces.sans,
     fontSize: 14,
     lineHeight: 20,
   },
   submitButton: {
-    height: 50,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 20,
-    borderRadius: 25,
-    backgroundColor: '#15966A',
+    gap: spacing.xs,
+    minHeight: 54,
+    borderRadius: radii.md,
+    borderCurve: 'continuous',
+    backgroundColor: colors.primary,
   },
   submitButtonDisabled: {
-    backgroundColor: '#B9C4BF',
+    backgroundColor: colors.disabled,
   },
   submitButtonPressed: {
-    opacity: 0.78,
+    backgroundColor: colors.primaryPressed,
+    transform: [{ scale: 0.99 }],
   },
   submitText: {
-    color: '#FFFFFF',
+    color: colors.paper,
+    fontFamily: typefaces.sansMedium,
     fontSize: 16,
-    fontWeight: '600',
+    letterSpacing: 0.3,
   },
 });

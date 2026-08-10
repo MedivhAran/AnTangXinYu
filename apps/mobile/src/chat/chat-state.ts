@@ -11,28 +11,30 @@ export type ChatState = {
   sending: boolean;
   activity: AgentActivityPhase | null;
   error: string | null;
-  pendingClientMessageId: string | null;
+  pendingRequestId: string | null;
 };
 
 export const initialChatState: ChatState = {
   messages: [],
   nextBefore: null,
-  historyLoading: false,
+  historyLoading: true,
   sending: false,
   activity: null,
   error: null,
-  pendingClientMessageId: null,
+  pendingRequestId: null,
 };
 
 type ChatAction =
   | { type: 'history-loading' }
   | { type: 'history-replaced'; messages: ChatMessage[]; nextBefore: string | null }
   | { type: 'history-prepended'; messages: ChatMessage[]; nextBefore: string | null }
+  | { type: 'history-merged'; messages: ChatMessage[] }
   | { type: 'history-failed'; message: string }
   | { type: 'send-started'; clientMessageId: string; content: string; now: string }
+  | { type: 'retry-started'; requestId: string; now: string }
   | { type: 'stream-event'; event: ChatStreamEvent }
-  | { type: 'send-rejected'; clientMessageId: string; message: string | null }
-  | { type: 'send-cancelled' }
+  | { type: 'request-rejected'; requestId: string; message: string | null }
+  | { type: 'request-cancelled' }
   | { type: 'transport-failed'; message: string }
   | { type: 'clear-error' };
 
@@ -42,14 +44,25 @@ function hasGeneratingAssistant(messages: ChatMessage[]): boolean {
   );
 }
 
+function mergeMessages(
+  current: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
+  const messages = new Map(current.map((message) => [message.id, message]));
+  for (const message of incoming) messages.set(message.id, message);
+  return [...messages.values()].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
 function updatePendingAssistant(
   state: ChatState,
   update: (message: ChatMessage) => ChatMessage,
 ): ChatMessage[] {
-  const clientId = state.pendingClientMessageId;
-  if (clientId === null) throw new Error('收到流事件时没有待处理消息');
+  const requestId = state.pendingRequestId;
+  if (requestId === null) throw new Error('收到流事件时没有待处理消息');
 
-  const localAssistantId = `local-assistant-${clientId}`;
+  const localAssistantId = `local-assistant-${requestId}`;
   let found = false;
   const messages = state.messages.map((message) => {
     if (message.id !== localAssistantId && message.status !== 'generating') return message;
@@ -74,7 +87,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         historyLoading: false,
         sending: hasGeneratingAssistant(action.messages),
         activity: null,
-        pendingClientMessageId: null,
+        pendingRequestId: null,
         error: null,
       };
 
@@ -89,6 +102,12 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         error: null,
       };
     }
+
+    case 'history-merged':
+      return {
+        ...state,
+        messages: mergeMessages(state.messages, action.messages),
+      };
 
     case 'history-failed':
       return { ...state, historyLoading: false, error: action.message };
@@ -115,12 +134,39 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         createdAt: action.now,
         completedAt: null,
       };
+      const previousAttemptIds = new Set([userMessage.id, assistantMessage.id]);
       return {
         ...state,
-        messages: [...state.messages, userMessage, assistantMessage],
+        messages: [
+          ...state.messages.filter((message) => !previousAttemptIds.has(message.id)),
+          userMessage,
+          assistantMessage,
+        ],
         sending: true,
         activity: 'thinking',
-        pendingClientMessageId: action.clientMessageId,
+        pendingRequestId: action.clientMessageId,
+        error: null,
+      };
+    }
+
+    case 'retry-started': {
+      if (state.sending) throw new Error('已有消息正在发送');
+      const assistantMessage: ChatMessage = {
+        id: `local-assistant-${action.requestId}`,
+        clientMessageId: null,
+        role: 'assistant',
+        status: 'generating',
+        content: '',
+        sources: [],
+        createdAt: action.now,
+        completedAt: null,
+      };
+      return {
+        ...state,
+        messages: [...state.messages, assistantMessage],
+        sending: true,
+        activity: 'thinking',
+        pendingRequestId: action.requestId,
         error: null,
       };
     }
@@ -129,15 +175,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const event = action.event;
 
       if (event.type === 'message_started') {
-        const clientId = state.pendingClientMessageId;
-        if (clientId === null) throw new Error('message_started 没有对应的本地消息');
+        const requestId = state.pendingRequestId;
+        if (requestId === null) throw new Error('message_started 没有对应的本地消息');
         return {
           ...state,
           messages: state.messages.map((message) => {
-            if (message.id === `local-user-${clientId}`) {
+            if (message.id === `local-user-${requestId}`) {
               return { ...message, id: event.userMessageId };
             }
-            if (message.id === `local-assistant-${clientId}`) {
+            if (message.id === `local-assistant-${requestId}`) {
               return { ...message, id: event.assistantMessageId };
             }
             return message;
@@ -171,7 +217,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           })),
           sending: false,
           activity: null,
-          pendingClientMessageId: null,
+          pendingRequestId: null,
         };
       }
 
@@ -184,52 +230,51 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         })),
         sending: false,
         activity: null,
-        pendingClientMessageId: null,
+        pendingRequestId: null,
         error: `AI 回复失败：${event.errorType}`,
       };
     }
 
-    case 'send-rejected':
+    case 'request-rejected':
       return {
         ...state,
         messages: state.messages.filter(
           (message) =>
-            message.id !== `local-user-${action.clientMessageId}` &&
-            message.id !== `local-assistant-${action.clientMessageId}`,
+            message.id !== `local-user-${action.requestId}` &&
+            message.id !== `local-assistant-${action.requestId}`,
         ),
         sending: false,
         activity: null,
-        pendingClientMessageId: null,
+        pendingRequestId: null,
         error: action.message,
       };
 
     case 'transport-failed':
-      return {
-        ...state,
-        messages: updatePendingAssistant(state, (message) => ({
-          ...message,
-          status: 'failed',
-          completedAt: new Date().toISOString(),
-        })),
-        sending: false,
-        activity: null,
-        pendingClientMessageId: null,
-        error: action.message,
-      };
+    case 'request-cancelled': {
+      const requestId = state.pendingRequestId;
+      if (requestId === null) throw new Error('结束请求时没有待处理消息');
+      const localAssistantId = `local-assistant-${requestId}`;
+      const unstartedRetry =
+        state.messages.some((message) => message.id === localAssistantId) &&
+        !state.messages.some((message) => message.id === `local-user-${requestId}`);
+      const error =
+        action.type === 'transport-failed' ? action.message : '本次回复已取消。';
 
-    case 'send-cancelled':
       return {
         ...state,
-        messages: updatePendingAssistant(state, (message) => ({
-          ...message,
-          status: 'cancelled',
-          completedAt: new Date().toISOString(),
-        })),
+        messages: unstartedRetry
+          ? state.messages.filter((message) => message.id !== localAssistantId)
+          : updatePendingAssistant(state, (message) => ({
+              ...message,
+              status: action.type === 'transport-failed' ? 'failed' : 'cancelled',
+              completedAt: new Date().toISOString(),
+            })),
         sending: false,
         activity: null,
-        pendingClientMessageId: null,
-        error: '本次回复已取消。',
+        pendingRequestId: null,
+        error,
       };
+    }
 
     case 'clear-error':
       return { ...state, error: null };

@@ -3,7 +3,7 @@ import math
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from anyio import CancelScope
@@ -14,12 +14,11 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
-from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from antang_api.agents.runtime import CoreAgentContext, ToolActivity, ToolResponseError
+from antang_api.agents.runtime import AgentContext, ToolActivity, ToolResponseError
 from antang_api.database import session_factory as default_session_factory
 from antang_api.models import (
     AgentRun,
@@ -140,22 +139,6 @@ def _tool_rounds(
     ]
 
 
-def _without_web_search(
-    tools: Sequence[BaseTool | dict[str, Any]],
-) -> list[BaseTool | dict[str, Any]]:
-    """最后一轮只保留读取工具；未知供应商工具保持原样。"""
-
-    return [
-        tool
-        for tool in tools
-        if (
-            tool.get("name") != "web_search"
-            if isinstance(tool, dict)
-            else tool.name != "web_search"
-        )
-    ]
-
-
 def _matching_tool_message(
     result: ToolMessage | Command[Any],
     tool_call_id: str,
@@ -183,7 +166,7 @@ def _matching_tool_message(
 
 
 class ToolPersistenceMiddleware(
-    AgentMiddleware[AgentState[Any], CoreAgentContext | None, Any]
+    AgentMiddleware[AgentState[Any], AgentContext | None, Any]
 ):
     """在工具执行的每个阶段，往数据库写记录、往手机发状态事件，并且强制上限。"""
 
@@ -193,29 +176,35 @@ class ToolPersistenceMiddleware(
         *,
         max_tool_rounds: int,
         max_parallel_tool_calls: int,
+        ignored_tool_names: frozenset[str] = frozenset(),
+        emit_activity: bool = True,
     ) -> None:
         if max_tool_rounds < 1:
             raise ValueError("max_tool_rounds 必须大于 0")
         if max_parallel_tool_calls < 1:
             raise ValueError("max_parallel_tool_calls 必须大于 0")
+        if any(not name.strip() for name in ignored_tool_names):
+            raise ValueError("ignored_tool_names 不能包含空白名称")
 
         self._session_factory = session_factory
         self._max_tool_rounds = max_tool_rounds
         self._max_parallel_tool_calls = max_parallel_tool_calls
+        self._ignored_tool_names = ignored_tool_names
+        self._emit_activity = emit_activity
 
     async def awrap_model_call(
         self,
-        request: ModelRequest[CoreAgentContext | None],
+        request: ModelRequest[AgentContext | None],
         handler: Callable[
-            [ModelRequest[CoreAgentContext | None]],
+            [ModelRequest[AgentContext | None]],
             Awaitable[ModelResponse[Any]],
         ],
     ) -> ModelResponse[Any] | AIMessage:
         """按剩余轮次缩小模型可见的工具集合，硬上限仍由执行阶段校验。"""
 
         context = request.runtime.context
-        if not isinstance(context, CoreAgentContext):
-            raise RuntimeError("模型调用缺少 CoreAgentContext")
+        if not isinstance(context, AgentContext):
+            raise RuntimeError("模型调用缺少 AgentContext")
 
         completed_rounds = len(
             _tool_rounds(request.messages, context.input_message_count)
@@ -226,14 +215,24 @@ class ToolPersistenceMiddleware(
             return await handler(request.override(tool_choice={"type": "none"}))
         if completed_rounds == self._max_tool_rounds - 1:
             return await handler(
-                request.override(tools=_without_web_search(request.tools))
+                request.override(
+                    tools=[
+                        tool
+                        for tool in request.tools
+                        if (
+                            tool.get("name") != "web_search"
+                            if isinstance(tool, dict)
+                            else tool.name != "web_search"
+                        )
+                    ]
+                )
             )
         return await handler(request)
 
     async def _start_call(
         self,
         *,
-        context: CoreAgentContext,
+        context: AgentContext,
         tool_call_id: str,
         tool_name: str,
         arguments: dict[str, Any],
@@ -294,9 +293,6 @@ class ToolPersistenceMiddleware(
                 )
 
             elapsed_seconds = monotonic() - started_monotonic
-            if elapsed_seconds < 0:
-                raise RuntimeError("系统单调时钟发生倒退")
-
             record.status = status
             record.result = result
             record.provider_metadata = provider_metadata
@@ -319,8 +315,8 @@ class ToolPersistenceMiddleware(
         ],
     ) -> ToolMessage | Command[Any]:
         context = request.runtime.context
-        if not isinstance(context, CoreAgentContext):
-            raise RuntimeError("工具调用缺少 CoreAgentContext")
+        if not isinstance(context, AgentContext):
+            raise RuntimeError("工具调用缺少 AgentContext")
 
         tool_call_id = request.tool_call.get("id")
         tool_name = request.tool_call.get("name")
@@ -332,7 +328,10 @@ class ToolPersistenceMiddleware(
             raise RuntimeError("工具调用缺少工具名称")
         if not isinstance(arguments, dict):
             raise RuntimeError("工具调用参数必须是对象")
-
+        # LangChain 的 ToolStrategy 也会产生一个内部“工具调用”来承载最终
+        # 结构化结果。它不读取外部数据，不属于业务工具审计范围。
+        if tool_name in self._ignored_tool_names:
+            return await handler(request)
         messages = request.state["messages"]
         model_turn_index, tool_call_index = _current_tool_position(
             messages,
@@ -350,38 +349,29 @@ class ToolPersistenceMiddleware(
             tool_call_index=tool_call_index,
         )
 
-        # 发送custom通道的事件 {"type": "custom", "data": {...}}
         stream_writer = request.runtime.stream_writer
-        stream_writer(
-            ToolActivity(
-                event="tool_activity",
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                status="started",
-            )
-        )
 
-        if model_turn_index == self._max_tool_rounds and tool_name == "web_search":
-            error = ToolExecutionLimitError(
-                "最后一轮工具调用不能重新搜索，因为已经没有后续轮次读取网页"
-            )
-            await self._finish_call(
-                record_id,
-                started_monotonic=started_monotonic,
-                status=AgentToolCallStatus.FAILED,
-                error=error,
-            )
+        def emit(
+            status: Literal["started", "completed", "failed", "cancelled"],
+        ) -> None:
+            if not self._emit_activity:
+                return
             stream_writer(
                 ToolActivity(
                     event="tool_activity",
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
-                    status="failed",
+                    status=status,
                 )
             )
-            raise error
+
+        emit("started")
 
         try:
+            if model_turn_index == self._max_tool_rounds and tool_name == "web_search":
+                raise ToolExecutionLimitError(
+                    "最后一轮工具调用不能重新搜索，因为已经没有后续轮次读取网页"
+                )
             handler_result = await handler(request)
             tool_message = _matching_tool_message(handler_result, tool_call_id)
             provider_metadata = (
@@ -397,14 +387,7 @@ class ToolPersistenceMiddleware(
                     status=AgentToolCallStatus.CANCELLED,
                     error=error,
                 )
-                stream_writer(
-                    ToolActivity(
-                        event="tool_activity",
-                        tool_call_id=tool_call_id,
-                        tool_name=tool_name,
-                        status="cancelled",
-                    )
-                )
+                emit("cancelled")
             raise
         except Exception as error:
             exposed_error: Exception
@@ -426,14 +409,7 @@ class ToolPersistenceMiddleware(
                 provider_metadata=provider_metadata,
                 error=exposed_error,
             )
-            stream_writer(
-                ToolActivity(
-                    event="tool_activity",
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    status="failed",
-                )
-            )
+            emit("failed")
             if exposed_error is error:
                 raise
             raise exposed_error from error
@@ -447,14 +423,7 @@ class ToolPersistenceMiddleware(
                 result=tool_message.content,
                 error=error,
             )
-            stream_writer(
-                ToolActivity(
-                    event="tool_activity",
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    status="failed",
-                )
-            )
+            emit("failed")
             raise error
 
         await self._finish_call(
@@ -464,12 +433,5 @@ class ToolPersistenceMiddleware(
             result=tool_message.content,
             provider_metadata=provider_metadata,
         )
-        stream_writer(
-            ToolActivity(
-                event="tool_activity",
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                status="completed",
-            )
-        )
+        emit("completed")
         return handler_result

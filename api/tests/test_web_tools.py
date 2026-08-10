@@ -12,7 +12,7 @@ from langchain_core.tools.structured import StructuredTool
 from pydantic import BaseModel
 from tavily import AsyncTavilyClient
 
-from antang_api.agents.runtime import CoreAgentContext
+from antang_api.agents.runtime import AgentContext
 from antang_api.tools.web import WebToolError, build_web_tools
 
 
@@ -21,10 +21,10 @@ def make_runtime(
     messages: list[BaseMessage] | None = None,
     tool_call_id: str = "tool-call-id",
     input_message_count: int = 1,
-) -> ToolRuntime[CoreAgentContext]:
+) -> ToolRuntime[AgentContext]:
     return ToolRuntime(
         state={"messages": messages or []},
-        context=CoreAgentContext(
+        context=AgentContext(
             user_id=uuid4(),
             run_id=uuid4(),
             input_message_count=input_message_count,
@@ -102,7 +102,7 @@ def fetch_runtime(
     *,
     url: str,
     fetch_call_id: str = "fetch-call",
-) -> ToolRuntime[CoreAgentContext]:
+) -> ToolRuntime[AgentContext]:
     search_call_id = "search-call"
     return make_runtime(
         messages=[
@@ -262,25 +262,34 @@ async def test_web_fetch_uses_fixed_parameters_and_normalizes_result() -> None:
 
 
 @pytest.mark.parametrize(
-    "response",
+    ("response", "error_text"),
     [
-        {},
-        {"results": []},
-        {
-            "results": [
-                {"title": "标题", "url": "https://example.com", "content": "内容"}
-            ]
-        },
+        (provider_response({"results": []}), "没有返回结果"),
+        (
+            provider_response(
+                {
+                    "results": [
+                        {
+                            "title": "标题",
+                            "url": "https://example.com",
+                            "content": "内容",
+                        }
+                    ]
+                }
+            ),
+            "score",
+        ),
     ],
 )
 async def test_web_search_rejects_empty_or_invalid_response(
     response: dict[str, object],
+    error_text: str,
 ) -> None:
     client = mock_client()
     client.search.return_value = response
     search_tool, _ = build_tools(client)
 
-    with pytest.raises(WebToolError):
+    with pytest.raises(WebToolError, match=error_text):
         await tool_coroutine(search_tool)(query="测试", runtime=make_runtime())
 
     assert client.search.await_count == 1

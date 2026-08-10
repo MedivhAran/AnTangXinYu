@@ -3,9 +3,7 @@ from langchain_anthropic import ChatAnthropic
 from antang_api.settings import settings
 
 
-def build_deepseek_model() -> ChatAnthropic:
-    """创建使用 Anthropic 协议连接 DeepSeek 的聊天模型。"""
-
+def _build_deepseek_model(*, streaming: bool) -> ChatAnthropic:
     return ChatAnthropic(
         model_name=settings.deepseek_model,
         api_key=settings.deepseek_api_key,
@@ -14,6 +12,18 @@ def build_deepseek_model() -> ChatAnthropic:
         max_tokens_to_sample=settings.deepseek_max_output_tokens,
         max_retries=0,
         stop=None,
-        streaming=True,
-        stream_usage=True,
+        streaming=streaming,
+        stream_usage=streaming,
     )
+
+
+def build_deepseek_model() -> ChatAnthropic:
+    """创建用于 Core Agent 用户可见流式回复的 DeepSeek 模型。"""
+
+    return _build_deepseek_model(streaming=True)
+
+
+def build_deepseek_non_streaming_model() -> ChatAnthropic:
+    """创建用于内部 Sub-agent、不会向聊天流发送 token 的 DeepSeek 模型。"""
+
+    return _build_deepseek_model(streaming=False)

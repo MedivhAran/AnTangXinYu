@@ -1,5 +1,6 @@
 import { registerRootComponent } from 'expo';
 
+import './src/health-connect/background-health-sync';
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

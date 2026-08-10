@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+script="$project_dir/api/scripts/hindsight_acceptance.py"
+
+cd "$project_dir"
+docker compose run --rm --no-deps \
+    --volume "$script:/tmp/hindsight_acceptance.py:ro" \
+    api /app/.venv/bin/python /tmp/hindsight_acceptance.py

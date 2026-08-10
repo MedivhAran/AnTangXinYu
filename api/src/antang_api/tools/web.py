@@ -11,7 +11,7 @@ from langchain_core.tools import BaseTool
 from pydantic import Field
 from tavily import AsyncTavilyClient
 
-from antang_api.agents.runtime import CoreAgentContext, ToolResponseError
+from antang_api.agents.runtime import AgentContext, ToolResponseError
 
 
 class WebToolError(ToolResponseError):
@@ -246,7 +246,7 @@ def _normalize_fetch_content(
 
 
 def _runtime_messages(
-    runtime: ToolRuntime[CoreAgentContext],
+    runtime: ToolRuntime[AgentContext],
 ) -> tuple[BaseMessage, ...]:
     state = runtime.state
     if not isinstance(state, dict):
@@ -401,7 +401,7 @@ def _human_message_urls(
 
 
 def _resolve_fetch_source(
-    runtime: ToolRuntime[CoreAgentContext],
+    runtime: ToolRuntime[AgentContext],
     requested_url: str,
 ) -> tuple[str, str]:
     messages = _runtime_messages(runtime)
@@ -456,7 +456,7 @@ def build_web_tools(
     @tool("web_search", response_format="content_and_artifact")
     async def web_search(
         query: WebQuery,
-        runtime: ToolRuntime[CoreAgentContext],
+        runtime: ToolRuntime[AgentContext],
     ) -> tuple[SearchOutput, WebToolArtifact]:
         """搜索公开网页，返回最多五个标题、URL 和相关内容片段。"""
 
@@ -486,7 +486,7 @@ def build_web_tools(
     async def web_fetch(
         url: WebFetchUrl,
         query: WebQuery,
-        runtime: ToolRuntime[CoreAgentContext],
+        runtime: ToolRuntime[AgentContext],
     ) -> tuple[FetchOutput, WebToolArtifact]:
         """读取一个 http(s) 网页，按 query 返回最多三个相关 Markdown 片段。"""
 

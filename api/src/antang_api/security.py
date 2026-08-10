@@ -26,7 +26,7 @@ def verify_password(password: str, password_hash: str) -> bool:
     return password_hasher.verify(password, password_hash)
 
 
-def create_access_token(user_id: UUID) -> str:
+def create_access_token(user_id: UUID, login_session_id: UUID) -> str:
     """创建一个JWT访问令牌"""
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=settings.access_token_minutes)
@@ -34,6 +34,7 @@ def create_access_token(user_id: UUID) -> str:
     # 符合 JWT 标准规范
     payload = {
         "sub": str(user_id),
+        "sid": str(login_session_id),
         "type": "access",
         "jti": str(uuid4()),  # 访问token的唯一编号
         "iss": ISSUER,
@@ -49,7 +50,7 @@ def create_access_token(user_id: UUID) -> str:
     )
 
 
-def decode_access_token(token: str) -> UUID:
+def decode_access_token(token: str) -> tuple[UUID, UUID]:
     try:
         payload = jwt.decode(
             token,
@@ -60,6 +61,7 @@ def decode_access_token(token: str) -> UUID:
             options={
                 "require": [
                     "sub",
+                    "sid",
                     "type",
                     "jti",
                     "iss",
@@ -73,7 +75,7 @@ def decode_access_token(token: str) -> UUID:
         if payload["type"] != "access":
             raise InvalidTokenError("Invalid token type")
 
-        return UUID(payload["sub"])
+        return UUID(payload["sub"]), UUID(payload["sid"])
     except (InvalidTokenError, KeyError, TypeError, ValueError) as error:
         raise InvalidTokenError("Invalid access token") from error
 

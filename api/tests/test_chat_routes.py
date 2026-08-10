@@ -15,7 +15,13 @@ from antang_api.chat import prepare_chat_run
 from antang_api.context.builder import ChatContext
 from antang_api.context.preparation import PreparedChatContext
 from antang_api.main import app
-from antang_api.models import Message, MessageRole, MessageStatus
+from antang_api.models import (
+    AgentRun,
+    AgentRunStatus,
+    Message,
+    MessageRole,
+    MessageStatus,
+)
 
 
 class RouteFakeAgent:
@@ -30,7 +36,11 @@ class RouteFakeAgent:
             "type": "messages",
             "data": (
                 AIMessageChunk(content="我在这里。"),
-                {"langgraph_node": "model", "langgraph_step": 0},
+                {
+                    "langgraph_node": "model",
+                    "langgraph_step": 0,
+                    "stream_visibility": "user",
+                },
             ),
         }
         yield {
@@ -49,6 +59,11 @@ class RouteFakeAgent:
                 ]
             },
         }
+
+
+class RouteFakeCompanionMemory:
+    async def prepare_context(self, *_args: Any) -> str:
+        return ""
 
 
 async def register(client: AsyncClient, prefix: str) -> dict[str, Any]:
@@ -100,6 +115,7 @@ async def test_send_message_streams_ndjson_and_saves_answer(
     app.state.chat_model = object()
     app.state.core_agent = RouteFakeAgent()
     app.state.core_tools = ()
+    app.state.companion_memory = RouteFakeCompanionMemory()
     monkeypatch.setattr(
         chat,
         "prepare_chat_context",
@@ -198,6 +214,100 @@ async def test_send_message_returns_stable_duplicate_and_active_codes(
     assert duplicate.json()["code"] == "duplicate_client_message"
     assert active.status_code == 409
     assert active.json()["code"] == "active_agent_run"
+
+
+async def test_retry_failed_message_streams_a_new_answer_without_new_user_message(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = await register(client, "route_retry")
+    user_id = UUID(auth["user"]["id"])
+    original = await prepare_chat_run(
+        db_session,
+        user_id,
+        uuid4(),
+        "有点担心",
+    )
+    failed_message = await db_session.get(Message, original.assistant_message_id)
+    failed_run = await db_session.get(AgentRun, original.run_id)
+    assert failed_message is not None
+    assert failed_run is not None
+    failed_message.status = MessageStatus.FAILED
+    failed_message.content = "没有生成完"
+    failed_run.status = AgentRunStatus.FAILED
+    await db_session.commit()
+
+    app.state.chat_model = object()
+    app.state.core_agent = RouteFakeAgent()
+    app.state.core_tools = ()
+    app.state.companion_memory = RouteFakeCompanionMemory()
+    monkeypatch.setattr(
+        chat,
+        "prepare_chat_context",
+        AsyncMock(
+            return_value=PreparedChatContext(
+                context=ChatContext(
+                    messages=(HumanMessage(content="有点担心"),),
+                    summary_id=None,
+                    summary_through_message_id=None,
+                ),
+                input_tokens=20,
+                was_compacted=False,
+                cleared_tool_result_count=0,
+            )
+        ),
+    )
+
+    response = await client.post(
+        f"/api/v1/chat/messages/{original.assistant_message_id}/retry",
+        headers=auth_headers(auth),
+    )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert events[0]["type"] == "message_started"
+    assert events[0]["user_message_id"] == str(original.user_message_id)
+    assert events[0]["assistant_message_id"] != str(original.assistant_message_id)
+    history = await client.get(
+        "/api/v1/chat/messages",
+        headers=auth_headers(auth),
+    )
+    assert [message["content"] for message in history.json()["messages"]] == [
+        "有点担心",
+        "没有生成完",
+        "我在这里。",
+    ]
+
+
+async def test_retry_message_returns_stable_not_found_and_conflict_codes(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    auth = await register(client, "route_retry_errors")
+    missing = await client.post(
+        f"/api/v1/chat/messages/{uuid4()}/retry",
+        headers=auth_headers(auth),
+    )
+
+    completed_message = Message(
+        client_message_id=None,
+        user_id=UUID(auth["user"]["id"]),
+        role=MessageRole.ASSISTANT,
+        status=MessageStatus.COMPLETED,
+        content="已经完成",
+    )
+    db_session.add(completed_message)
+    await db_session.commit()
+    conflict = await client.post(
+        f"/api/v1/chat/messages/{completed_message.id}/retry",
+        headers=auth_headers(auth),
+    )
+
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "retry_message_not_found"
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "chat_retry_not_allowed"
 
 
 async def test_message_history_uses_before_cursor_and_includes_all_statuses(

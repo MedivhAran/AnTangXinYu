@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+api_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+exec "$api_dir/.venv/bin/python" \
+    "$api_dir/scripts/import_test_heart_rate.py" "$@"

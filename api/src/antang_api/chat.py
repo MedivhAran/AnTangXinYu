@@ -1,9 +1,10 @@
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from anyio import CancelScope
@@ -18,24 +19,33 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from antang_api.agents.core import CoreAgentGraph, SYSTEM_PROMPT
-from antang_api.agents.runtime import CoreAgentContext, ToolActivity
+from antang_api.agents.core import (
+    CoreAgentGraph,
+    render_core_system_prompt,
+)
+from antang_api.agents.runtime import AgentContext, ToolActivity
 from antang_api.citations import (
     VISIBLE_TURN_SEPARATOR,
     VisibleCitationTurn,
     load_and_validate_citations,
 )
+from antang_api.companion_memory import CompanionMemory
 from antang_api.context import prepare_chat_context
+from antang_api.context.health_profile import render_core_profile
+from antang_api.database import lock_user_conversation
 from antang_api.models import (
     AgentRun,
     AgentRunStatus,
     AgentToolCall,
     AgentToolCallStatus,
+    CarePlan,
+    CarePlanStatus,
     Message,
     MessageRole,
     MessageStatus,
 )
 from antang_api.schemas.chat import (
+    ActivityPhase,
     AgentActivityEvent,
     ChatStreamEvent,
     ChatSource,
@@ -44,6 +54,7 @@ from antang_api.schemas.chat import (
     MessageStartedEvent,
     TextDeltaEvent,
 )
+from antang_api.proactive_care.service import record_user_activity
 from antang_api.settings import settings
 
 
@@ -55,15 +66,24 @@ class ActiveAgentRunError(Exception):
     """当前用户已经有一个正在执行的顶层 Agent。"""
 
 
-ActivityPhase: TypeAlias = Literal[
-    "thinking",
-    "searching",
-    "reading",
-    "organizing",
-]
+class ChatRetryError(Exception):
+    """指定的失败回答不存在，或者当前已经不能重试。"""
+
+    def __init__(
+        self,
+        code: Literal["retry_message_not_found", "chat_retry_not_allowed"],
+        message: str,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 TOOL_ACTIVITY_PHASES: dict[str, ActivityPhase] = {
     "web_search": "searching",
     "web_fetch": "reading",
+    "read_wearable_data": "reading",
+    "delegate_health_profile": "organizing",
+    "manage_care_plan": "organizing",
 }
 
 
@@ -91,17 +111,24 @@ async def prepare_chat_run(
         status=MessageStatus.COMPLETED,
         content=content,
     )
-    assistant_message = Message(
-        client_message_id=None,
-        user_id=user_id,
-        role=MessageRole.ASSISTANT,
-        status=MessageStatus.GENERATING,
-        content="",
-    )
-    session.add_all([user_message, assistant_message])
-
     try:
-        # 先写入消息，以取得 PostgreSQL 生成的 UUIDv7。
+        await lock_user_conversation(session, user_id)
+        session.add(user_message)
+        await session.flush()
+        await record_user_activity(
+            session,
+            user_id=user_id,
+            message_id=user_message.id,
+        )
+
+        assistant_message = Message(
+            client_message_id=None,
+            user_id=user_id,
+            role=MessageRole.ASSISTANT,
+            status=MessageStatus.GENERATING,
+            content="",
+        )
+        session.add(assistant_message)
         await session.flush()
 
         agent_run = AgentRun(
@@ -135,6 +162,101 @@ async def prepare_chat_run(
                 raise ActiveAgentRunError() from error
 
         raise
+
+
+async def prepare_chat_retry(
+    session: AsyncSession,
+    user_id: UUID,
+    failed_assistant_message_id: UUID,
+) -> PreparedChatRun:
+    """为失败或取消的回答重建 Core 运行，继续使用原用户消息。"""
+
+    await lock_user_conversation(session, user_id)
+
+    failed_message = await session.scalar(
+        select(Message).where(
+            Message.id == failed_assistant_message_id,
+            Message.user_id == user_id,
+            Message.role == MessageRole.ASSISTANT,
+        )
+    )
+    if failed_message is None:
+        raise ChatRetryError("retry_message_not_found", "找不到要重试的回答")
+    if failed_message.status not in {
+        MessageStatus.FAILED,
+        MessageStatus.CANCELLED,
+    }:
+        raise ChatRetryError("chat_retry_not_allowed", "这条回答当前不能重试")
+
+    original_run = await session.scalar(
+        select(AgentRun).where(
+            AgentRun.user_id == user_id,
+            AgentRun.result_message_id == failed_message.id,
+            AgentRun.parent_run_id.is_(None),
+            AgentRun.agent_name == "core_agent",
+        )
+    )
+    if original_run is None:
+        raise ChatRetryError("retry_message_not_found", "找不到要重试的运行记录")
+    if original_run.status not in {
+        AgentRunStatus.FAILED,
+        AgentRunStatus.CANCELLED,
+    }:
+        raise ChatRetryError("chat_retry_not_allowed", "这条回答当前不能重试")
+    if original_run.trigger_message_id is None:
+        raise RuntimeError("Core AgentRun 缺少用户消息触发来源")
+
+    later_message = await session.scalar(
+        select(Message.id)
+        .where(
+            Message.user_id == user_id,
+            Message.id > failed_message.id,
+        )
+        .limit(1)
+    )
+    if later_message is not None:
+        raise ChatRetryError(
+            "chat_retry_not_allowed",
+            "对话已经继续，不能再重试这条回答",
+        )
+
+    assistant_message = Message(
+        client_message_id=None,
+        user_id=user_id,
+        role=MessageRole.ASSISTANT,
+        status=MessageStatus.GENERATING,
+        content="",
+    )
+    session.add(assistant_message)
+
+    try:
+        await session.flush()
+        agent_run = AgentRun(
+            user_id=user_id,
+            trigger_message_id=original_run.trigger_message_id,
+            result_message_id=assistant_message.id,
+            parent_run_id=None,
+            agent_name="core_agent",
+            model=settings.deepseek_model,
+            status=AgentRunStatus.RUNNING,
+        )
+        session.add(agent_run)
+        await session.flush()
+        await session.commit()
+    except IntegrityError as error:
+        await session.rollback()
+        if (
+            isinstance(error.orig, UniqueViolation)
+            and error.orig.diag.constraint_name == "uq_agent_runs_active_root_user"
+        ):
+            raise ActiveAgentRunError() from error
+        raise
+
+    return PreparedChatRun(
+        user_message_id=original_run.trigger_message_id,
+        assistant_message_id=assistant_message.id,
+        run_id=agent_run.id,
+    )
 
 
 async def _load_running_chat_run(
@@ -258,6 +380,15 @@ def _parse_tool_activity(value: object) -> ToolActivity:
     return cast(ToolActivity, value)
 
 
+def _is_user_visible_model_event(metadata: dict[str, Any]) -> bool:
+    """只允许顶层 Core 模型的文字进入 App，嵌套 Agent 一律不可见。"""
+
+    return (
+        metadata.get("langgraph_node") == "model"
+        and metadata.get("stream_visibility") == "user"
+    )
+
+
 async def _complete_chat_run(
     session: AsyncSession,
     prepared_run: PreparedChatRun,
@@ -373,6 +504,7 @@ async def stream_chat_run(
     model: ChatAnthropic,
     agent: CoreAgentGraph,
     tools: Sequence[BaseTool],
+    companion_memory: CompanionMemory,
     user_id: UUID,
     prepared_run: PreparedChatRun,
 ) -> AsyncIterator[ChatStreamEvent]:
@@ -401,10 +533,47 @@ async def stream_chat_run(
         current_activity = "thinking"
         yield AgentActivityEvent(phase=current_activity)
 
+        health_profile_context = await render_core_profile(
+            session,
+            user_id,
+        )
+        companion_memory_context = await companion_memory.prepare_context(
+            session,
+            user_id,
+            prepared_run.user_message_id,
+        )
+        active_plans = list(
+            await session.scalars(
+                select(CarePlan)
+                .where(
+                    CarePlan.user_id == user_id,
+                    CarePlan.status == CarePlanStatus.ACTIVE,
+                )
+                .order_by(CarePlan.follow_up_at, CarePlan.id)
+            )
+        )
+        care_plan_context = json.dumps(
+            [
+                {
+                    "plan_id": str(plan.id),
+                    "summary": plan.summary,
+                    "follow_up_at": plan.follow_up_at.isoformat(),
+                    "revision": plan.revision,
+                }
+                for plan in active_plans
+            ],
+            ensure_ascii=False,
+        )
+        rendered_system_prompt = render_core_system_prompt(
+            health_profile_context,
+            companion_memory_context=companion_memory_context,
+            care_plan_context=care_plan_context,
+        )
+
         prepared_context = await prepare_chat_context(
             session=session,
             model=model,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=rendered_system_prompt,
             user_id=user_id,
             through_message_id=prepared_run.user_message_id,
             compaction_trigger_tokens=settings.context_compaction_trigger_tokens,
@@ -428,12 +597,14 @@ async def stream_chat_run(
             "metadata": {
                 "run_id": str(prepared_run.run_id),
                 "user_id": str(user_id),
+                "stream_visibility": "user",
             },
         }
-        runtime_context = CoreAgentContext(
+        runtime_context = AgentContext(
             user_id=user_id,
             run_id=prepared_run.run_id,
             input_message_count=input_message_count,
+            rendered_system_prompt=rendered_system_prompt,
         )
         last_text_model_step: int | None = None
         agent_input = cast(
@@ -457,7 +628,7 @@ async def stream_chat_run(
                     stream_part["data"],
                 )
 
-                if metadata["langgraph_node"] != "model":
+                if not _is_user_visible_model_event(metadata):
                     continue
 
                 if not isinstance(chunk, AIMessageChunk):
@@ -607,17 +778,23 @@ async def stream_chat_run(
 
 
 async def recover_interrupted_chat_runs(session: AsyncSession) -> None:
-    """服务启动时把上次进程遗留的 Agent 和工具记录明确标记为失败。"""
+    """API 启动时只恢复由用户消息触发、属于本进程的运行。"""
 
     runs = list(
         await session.scalars(
-            select(AgentRun).where(AgentRun.status == AgentRunStatus.RUNNING)
+            select(AgentRun).where(
+                AgentRun.status == AgentRunStatus.RUNNING,
+                AgentRun.trigger_care_task_id.is_(None),
+            )
         )
     )
     tool_calls = list(
         await session.scalars(
-            select(AgentToolCall).where(
-                AgentToolCall.status == AgentToolCallStatus.RUNNING
+            select(AgentToolCall)
+            .join(AgentRun, AgentRun.id == AgentToolCall.agent_run_id)
+            .where(
+                AgentToolCall.status == AgentToolCallStatus.RUNNING,
+                AgentRun.trigger_care_task_id.is_(None),
             )
         )
     )

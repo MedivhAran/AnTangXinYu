@@ -24,3 +24,12 @@ __pycache__/
 
 *.apk
 *.aab
+
+# Word temp files
+~$*
+
+# Build artifacts
+artifacts/
+
+# IDE / tools
+.codex/

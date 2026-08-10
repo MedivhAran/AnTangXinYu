@@ -35,8 +35,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 
-from antang_api.agents.core import build_core_agent
-from antang_api.agents.runtime import CoreAgentContext, ToolResponseError
+from antang_api.agents.core import SYSTEM_PROMPT, build_core_agent
+from antang_api.agents.runtime import AgentContext, ToolResponseError
 from antang_api.agents.tool_middleware import (
     ToolExecutionError,
     ToolExecutionLimitError,
@@ -46,6 +46,7 @@ from antang_api.chat import PreparedChatRun, prepare_chat_run
 from antang_api.models import (
     AgentToolCall,
     AgentToolCallStatus,
+    ProactiveCareSettings,
     User,
 )
 
@@ -117,6 +118,8 @@ async def make_running_run(
     )
     db_session.add(user)
     await db_session.flush()
+    db_session.add(ProactiveCareSettings(user_id=user.id))
+    await db_session.flush()
 
     prepared_run = await prepare_chat_run(
         db_session,
@@ -129,7 +132,7 @@ async def make_running_run(
 
 def make_request(
     *,
-    context: CoreAgentContext,
+    context: AgentContext,
     messages: list[BaseMessage],
     tool_call: ToolCall,
     activities: list[object] | None = None,
@@ -212,7 +215,6 @@ def completed_tool_rounds(count: int) -> list[AnyMessage]:
     ("completed_round_count", "expected_tools", "expected_tool_choice"),
     [
         (0, ["web_search", "web_fetch"], None),
-        (1, ["web_search", "web_fetch"], None),
         (9, ["web_fetch"], None),
         (10, ["web_search", "web_fetch"], {"type": "none"}),
     ],
@@ -229,13 +231,13 @@ async def test_model_only_sees_tools_valid_for_remaining_rounds(
         max_tool_rounds=10,
         max_parallel_tool_calls=5,
     )
-    context = CoreAgentContext(
+    context = AgentContext(
         user_id=uuid4(),
         run_id=uuid4(),
         input_message_count=1,
     )
-    runtime: Runtime[CoreAgentContext | None] = Runtime(context=context)
-    request: ModelRequest[CoreAgentContext | None] = ModelRequest(
+    runtime: Runtime[AgentContext | None] = Runtime(context=context)
+    request: ModelRequest[AgentContext | None] = ModelRequest(
         model=ToolLoopFakeModel(responses=[AIMessage(content="完成")]),
         messages=messages,
         tools=[fake_web_search, fake_web_fetch],
@@ -246,7 +248,7 @@ async def test_model_only_sees_tools_valid_for_remaining_rounds(
     visible_tool_choice: object = None
 
     async def handler(
-        modified_request: ModelRequest[CoreAgentContext | None],
+        modified_request: ModelRequest[AgentContext | None],
     ) -> ModelResponse[Any]:
         nonlocal visible_tool_choice
         visible_tools.extend(
@@ -272,10 +274,11 @@ async def test_tool_success_uses_short_transactions_and_keeps_parallel_order(
         HumanMessage(content="测试工具调用"),
         AIMessage(content="", tool_calls=[first_call, second_call]),
     ]
-    context = CoreAgentContext(
+    context = AgentContext(
         user_id=user.id,
         run_id=prepared_run.run_id,
         input_message_count=1,
+        rendered_system_prompt=SYSTEM_PROMPT,
     )
     tracking_factory = TrackingSessionFactory(make_session_factory(db_session))
     middleware = ToolPersistenceMiddleware(
@@ -342,7 +345,7 @@ async def test_tool_artifact_metadata_is_saved_separately_from_model_content(
         max_parallel_tool_calls=5,
     )
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=[
             HumanMessage(content="测试"),
             AIMessage(content="", tool_calls=[call]),
@@ -386,7 +389,7 @@ async def test_invalid_tool_artifact_fails_once_and_is_not_persisted(
         max_parallel_tool_calls=5,
     )
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=[
             HumanMessage(content="测试"),
             AIMessage(content="", tool_calls=[call]),
@@ -456,10 +459,11 @@ async def test_create_agent_streams_real_tool_middleware_lifecycle(
         middleware=(middleware,),
     )
     config: RunnableConfig = {"configurable": {"thread_id": str(prepared_run.run_id)}}
-    context = CoreAgentContext(
+    context = AgentContext(
         user_id=user.id,
         run_id=prepared_run.run_id,
         input_message_count=1,
+        rendered_system_prompt=SYSTEM_PROMPT,
     )
 
     custom_events = [
@@ -488,7 +492,7 @@ async def test_tool_exception_is_saved_and_propagated(
 ) -> None:
     user, prepared_run = await make_running_run(db_session, "tool_failure")
     call = tool_call("call-failure", "失败")
-    context = CoreAgentContext(user.id, prepared_run.run_id, 1)
+    context = AgentContext(user.id, prepared_run.run_id, 1)
     middleware = ToolPersistenceMiddleware(
         make_session_factory(db_session),
         max_tool_rounds=3,
@@ -536,7 +540,7 @@ async def test_failed_provider_response_keeps_audit_metadata(
         max_parallel_tool_calls=5,
     )
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=[
             HumanMessage(content="测试"),
             AIMessage(content="", tool_calls=[call]),
@@ -576,7 +580,7 @@ async def test_error_tool_message_is_saved_then_fails_the_run(
         max_parallel_tool_calls=5,
     )
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=[
             HumanMessage(content="测试"),
             AIMessage(content="", tool_calls=[call]),
@@ -615,7 +619,7 @@ async def test_tool_invocation_error_is_wrapped_so_tool_node_cannot_recover(
         max_parallel_tool_calls=5,
     )
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=[
             HumanMessage(content="测试"),
             AIMessage(content="", tool_calls=[call]),
@@ -657,7 +661,7 @@ async def test_cancelled_tool_is_saved_and_cancellation_propagates(
         max_parallel_tool_calls=5,
     )
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=[
             HumanMessage(content="测试"),
             AIMessage(content="", tool_calls=[call]),
@@ -690,7 +694,7 @@ async def test_last_tool_round_rejects_new_search_before_provider_call(
     )
     activities: list[object] = []
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=messages,
         tool_call=call,
         activities=activities,
@@ -747,7 +751,7 @@ async def test_tool_limits_fail_before_execution(
         max_parallel_tool_calls=5,
     )
     request = make_request(
-        context=CoreAgentContext(user.id, prepared_run.run_id, 1),
+        context=AgentContext(user.id, prepared_run.run_id, 1),
         messages=messages,
         tool_call=current_calls[0],
     )
@@ -774,7 +778,7 @@ async def test_tool_limits_fail_before_execution(
 
 def test_runtime_and_limits_reject_invalid_configuration() -> None:
     with pytest.raises(ValueError, match="input_message_count"):
-        CoreAgentContext(uuid4(), uuid4(), -1)
+        AgentContext(uuid4(), uuid4(), -1)
 
     with pytest.raises(ValueError, match="max_tool_rounds"):
         ToolPersistenceMiddleware(

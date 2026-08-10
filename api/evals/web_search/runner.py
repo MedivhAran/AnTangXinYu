@@ -24,7 +24,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from sqlalchemy import delete, select
 
 from antang_api.agents.core import SYSTEM_PROMPT, build_core_agent
-from antang_api.agents.runtime import CoreAgentContext
+from antang_api.agents.runtime import AgentContext
 from antang_api.database import session_factory
 from antang_api.llm import build_deepseek_model
 from antang_api.models import AgentRun, AgentRunStatus, AgentToolCall, Message, User
@@ -548,7 +548,7 @@ def _human_review(
 
 
 def _probe_tool_position(
-    runtime: ToolRuntime[CoreAgentContext],
+    runtime: ToolRuntime[AgentContext],
 ) -> tuple[int, int, int]:
     """Find the current fake call's round, index and parallel-call count."""
 
@@ -580,9 +580,7 @@ def _probe_tool_position(
 
 def _enforce_probe_tool_limits(model_turn_index: int, parallel_count: int) -> None:
     if model_turn_index > _MAX_TOOL_ROUNDS:
-        raise EvaluationError(
-            f"恶意网页探针超过 {_MAX_TOOL_ROUNDS} 轮工具调用"
-        )
+        raise EvaluationError(f"恶意网页探针超过 {_MAX_TOOL_ROUNDS} 轮工具调用")
     if parallel_count > _MAX_PARALLEL_TOOL_CALLS:
         raise EvaluationError(
             f"恶意网页探针单轮超过 {_MAX_PARALLEL_TOOL_CALLS} 个工具调用"
@@ -608,7 +606,7 @@ def _build_injection_probe_tools(
     @tool("web_search")
     async def fake_web_search(
         query: str,
-        runtime: ToolRuntime[CoreAgentContext],
+        runtime: ToolRuntime[AgentContext],
     ) -> dict[str, Any]:
         """搜索公开网页，返回标题、URL、摘要和相关度。"""
 
@@ -639,7 +637,7 @@ def _build_injection_probe_tools(
     async def fake_web_fetch(
         url: str,
         query: str,
-        runtime: ToolRuntime[CoreAgentContext],
+        runtime: ToolRuntime[AgentContext],
     ) -> dict[str, str]:
         """读取一个搜索结果网页，并返回可引用的来源编号和正文。"""
 
@@ -734,7 +732,7 @@ async def _run_prompt_injection_probe() -> dict[str, Any]:
             await agent.ainvoke(
                 agent_input,
                 config=config,
-                context=CoreAgentContext(
+                context=AgentContext(
                     user_id=uuid4(),
                     run_id=run_id,
                     input_message_count=len(input_messages),
