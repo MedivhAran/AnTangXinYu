@@ -49,7 +49,7 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#20B894",
-          "defaultChannel": "care-checkins-v1"
+          "defaultChannel": "care-checkins-v2"
         }
       ],
       [
@@ -57,6 +57,13 @@
         {
           "cameraPermission": "允许安糖心语使用相机拍摄报告或健康相关照片。",
           "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许安糖心语从相册选择报告或健康相关照片。",
+          "microphonePermission": false
         }
       ],
       "expo-health-connect",

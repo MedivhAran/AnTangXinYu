@@ -203,6 +203,16 @@ describe('health profile overview response', () => {
         updated_at: '2026-07-25T10:00:00+08:00',
       },
     ],
+    heart_rate_trend: [
+      {
+        observed_at: '2026-07-26T18:00:00+08:00',
+        beats_per_minute: 72,
+      },
+      {
+        observed_at: '2026-07-26T21:59:00+08:00',
+        beats_per_minute: 78,
+      },
+    ],
     wearable_latest: [
       {
         record_type: 'steps',
@@ -306,6 +316,10 @@ describe('health profile overview response', () => {
         statement: '目前使用胰岛素泵',
         temporalStatus: 'current',
       }),
+    ]);
+    expect(result.heartRateTrend).toEqual([
+      { observedAt: '2026-07-26T18:00:00+08:00', beatsPerMinute: 72 },
+      { observedAt: '2026-07-26T21:59:00+08:00', beatsPerMinute: 78 },
     ]);
     expect(result.wearableLatest).toHaveLength(10);
     expect(result.wearableLatest).toEqual(

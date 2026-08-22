@@ -2,16 +2,28 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import JSONResponse, StreamingResponse
-from langchain_anthropic import ChatAnthropic
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from langchain.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from sqlalchemy import select
+from sqlalchemy import and_, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from antang_api.agents.core import CoreAgentGraph
 from antang_api.chat import (
     ActiveAgentRunError,
+    ChatAttachmentError,
     ChatRetryError,
     DuplicateClientMessageError,
     PreparedChatRun,
@@ -21,9 +33,17 @@ from antang_api.chat import (
 )
 from antang_api.companion_memory import CompanionMemory
 from antang_api.database import get_session
-from antang_api.models import Message, User
+from antang_api.models import (
+    AgentRun,
+    Message,
+    MessageAttachment,
+    MessageAttachmentKind,
+    User,
+)
 from antang_api.routers.auth import get_current_user
 from antang_api.schemas.chat import (
+    AttachmentUploadResponse,
+    ChatAttachmentResponse,
     ChatMessageResponse,
     MessageHistoryResponse,
     SendMessageRequest,
@@ -32,6 +52,102 @@ from antang_api.schemas.chat import (
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+SUPPORTED_ATTACHMENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
+
+
+async def _message_responses(
+    session: AsyncSession,
+    messages: Sequence[Message],
+) -> list[ChatMessageResponse]:
+    attachments = (
+        list(
+            await session.scalars(
+                select(MessageAttachment).where(
+                    MessageAttachment.message_id.in_(
+                        [message.id for message in messages]
+                    )
+                )
+            )
+        )
+        if messages
+        else []
+    )
+    by_message = {
+        attachment.message_id: ChatAttachmentResponse.model_validate(attachment)
+        for attachment in attachments
+        if attachment.message_id is not None
+    }
+    return [
+        ChatMessageResponse.model_validate(message).model_copy(
+            update={
+                "attachments": (
+                    [by_message[message.id]] if message.id in by_message else []
+                )
+            }
+        )
+        for message in messages
+    ]
+
+
+@router.post("/attachments", response_model=AttachmentUploadResponse)
+async def upload_attachment(
+    kind: Annotated[MessageAttachmentKind, Form()],
+    file: Annotated[UploadFile, File()],
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AttachmentUploadResponse:
+    """保存一份待发送的图片或 PDF。"""
+
+    if file.content_type not in SUPPORTED_ATTACHMENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="只支持 PDF、JPG 和 PNG",
+        )
+    data = await file.read(MAX_ATTACHMENT_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=422, detail="附件不能为空")
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=413, detail="附件不能超过 10MB")
+
+    filename = (file.filename or "附件").strip()[:255] or "附件"
+    attachment = MessageAttachment(
+        user_id=user.id,
+        message_id=None,
+        kind=kind,
+        filename=filename,
+        mime_type=file.content_type,
+        size_bytes=len(data),
+        data=data,
+    )
+    session.add(attachment)
+    await session.commit()
+    await session.refresh(attachment)
+    return AttachmentUploadResponse.model_validate(attachment)
+
+
+@router.get("/attachments/{attachment_id}/content", response_class=Response)
+async def get_attachment_content(
+    attachment_id: UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    """返回当前用户上传的图片或报告原文件。"""
+
+    attachment = await session.scalar(
+        select(MessageAttachment).where(
+            MessageAttachment.id == attachment_id,
+            MessageAttachment.user_id == user.id,
+        )
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="找不到附件")
+    return Response(
+        content=attachment.data,
+        media_type=attachment.mime_type,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
 
 def _stream_response(
     http_request: Request,
@@ -39,7 +155,7 @@ def _stream_response(
     user: User,
     prepared_run: PreparedChatRun,
 ) -> StreamingResponse:
-    model = cast(ChatAnthropic, http_request.app.state.chat_model)
+    model = cast(BaseChatModel, http_request.app.state.chat_model)
     agent = cast(CoreAgentGraph, http_request.app.state.core_agent)
     tools = cast(Sequence[BaseTool], http_request.app.state.core_tools)
     companion_memory = cast(
@@ -84,6 +200,7 @@ async def send_message(
             user_id=user.id,
             client_message_id=request.client_message_id,
             content=request.content,
+            attachment_id=request.attachment_id,
         )
 
     except DuplicateClientMessageError:
@@ -101,6 +218,11 @@ async def send_message(
                 "code": "active_agent_run",
                 "message": "上一条消息仍在处理中",
             },
+        )
+    except ChatAttachmentError as error:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"code": "attachment_unavailable", "message": str(error)},
         )
 
     return _stream_response(http_request, session, user, prepared_run)
@@ -152,7 +274,31 @@ async def get_message_history(
 ) -> MessageHistoryResponse:
     """使用消息 UUIDv7 游标读取一页历史，并按时间升序返回。"""
 
-    query = select(Message).where(Message.user_id == user.id)
+    previous_run = aliased(AgentRun)
+    later_run = aliased(AgentRun)
+    superseded_core_answer = exists(
+        select(later_run.id)
+        .select_from(previous_run)
+        .join(
+            later_run,
+            and_(
+                later_run.user_id == previous_run.user_id,
+                later_run.trigger_message_id == previous_run.trigger_message_id,
+                later_run.parent_run_id.is_(None),
+                later_run.agent_name == "core_agent",
+                later_run.id > previous_run.id,
+            ),
+        )
+        .where(
+            previous_run.result_message_id == Message.id,
+            previous_run.parent_run_id.is_(None),
+            previous_run.agent_name == "core_agent",
+        )
+    )
+    query = select(Message).where(
+        Message.user_id == user.id,
+        ~superseded_core_answer,
+    )
 
     if before is not None:
         query = query.where(Message.id < before)
@@ -167,9 +313,7 @@ async def get_message_history(
     next_before = page[-1].id if has_more else None
 
     return MessageHistoryResponse(
-        messages=[
-            ChatMessageResponse.model_validate(message) for message in reversed(page)
-        ],
+        messages=await _message_responses(session, list(reversed(page))),
         next_before=next_before,
     )
 
@@ -224,9 +368,11 @@ async def get_message_window(
         )
     )
     return MessageHistoryResponse(
-        messages=[
-            ChatMessageResponse.model_validate(message)
-            for message in (*previous, target, *following)
-        ],
+        messages=await _message_responses(
+            session,
+            [*previous, target, *following],
+        ),
         next_before=None,
     )
+    AttachmentUploadResponse,
+    ChatAttachmentResponse,

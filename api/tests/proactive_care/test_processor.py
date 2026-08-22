@@ -122,7 +122,7 @@ class FakeTokenModel:
         tools: list[object] | None = None,
     ) -> int:
         del messages, tools
-        return 100
+        raise NotImplementedError("configured model does not expose a tokenizer")
 
 
 async def test_first_heart_rate_candidate_creates_private_health_message(

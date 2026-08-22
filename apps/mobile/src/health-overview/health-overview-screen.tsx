@@ -15,10 +15,12 @@ import {
   Text,
   View,
 } from 'react-native';
+import Svg, { Circle, Line, Polyline } from 'react-native-svg';
 
 import { ApiError, errorMessage, type ApiClient } from '../api/client';
 import type {
   HealthFact,
+  HeartRateTrendPoint,
   HealthProfileChange,
   HealthProfile,
   PersonalProfileField,
@@ -40,6 +42,7 @@ export type HealthOverviewScreenProps = {
   api: Pick<ApiClient, 'changeHealthProfile' | 'getHealthProfile'>;
   onClose: () => void;
   onProfileChanged?: () => void;
+  onSyncWearable?: () => Promise<void>;
 };
 
 const colors = {
@@ -244,6 +247,7 @@ export function HealthOverviewScreen({
   api,
   onClose,
   onProfileChanged,
+  onSyncWearable,
 }: HealthOverviewScreenProps) {
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -318,13 +322,15 @@ export function HealthOverviewScreen({
     void refreshProfile();
   }
 
-  async function refreshProfile() {
+  async function refreshProfile(syncWearable = false) {
     if (requestRef.current !== null) return;
     const controller = new AbortController();
     requestRef.current = controller;
     setError(null);
     setRefreshing(true);
     try {
+      if (syncWearable) await onSyncWearable?.();
+      if (controller.signal.aborted) return;
       const value = await api.getHealthProfile(controller.signal);
       if (mountedRef.current && requestRef.current === controller) {
         setProfile(value);
@@ -521,7 +527,7 @@ export function HealthOverviewScreen({
             <Text style={styles.eyebrow}>健康记录</Text>
             <View style={styles.heroActions}>
               <Pressable
-                accessibilityLabel="刷新健康数据"
+                accessibilityLabel="同步 Health Connect 数据"
                 accessibilityRole="button"
                 accessibilityState={{
                   busy: refreshing,
@@ -529,7 +535,7 @@ export function HealthOverviewScreen({
                 }}
                 disabled={loading || refreshing}
                 hitSlop={4}
-                onPress={requestRefresh}
+                onPress={() => void refreshProfile(true)}
                 style={({ pressed }) => [
                   styles.heroAction,
                   pressed && styles.heroActionPressed,
@@ -538,7 +544,7 @@ export function HealthOverviewScreen({
                 {refreshing ? (
                   <ActivityIndicator color="#FFFDF7" size="small" />
                 ) : (
-                  <Text style={styles.heroActionText}>刷新</Text>
+                  <Text style={styles.heroActionText}>同步</Text>
                 )}
               </Pressable>
               <Pressable
@@ -661,7 +667,7 @@ export function HealthOverviewScreen({
             />
 
             <SectionHeader
-              description="每一项都是服务器保存的最近一条观测，并非此刻读数。"
+              description="心率展示最近 6 小时趋势，其他项目为服务器保存的最近观测。"
               kicker="设备数据"
               title="最近观测"
             />
@@ -675,6 +681,7 @@ export function HealthOverviewScreen({
               <View style={styles.metricsGrid}>
                 {orderedWearable.map((observation) => (
                   <WearableCard
+                    heartRateTrend={profile.heartRateTrend}
                     key={observation.recordType}
                     observation={observation}
                   />
@@ -765,18 +772,30 @@ function MetricCard({
   );
 }
 
-function WearableCard({ observation }: { observation: WearableLatest }) {
+function WearableCard({
+  heartRateTrend,
+  observation,
+}: {
+  heartRateTrend: HeartRateTrendPoint[];
+  observation: WearableLatest;
+}) {
   switch (observation.recordType) {
     case 'heart_rate': {
       const samples = observation.data.samples;
       const latest = samples[samples.length - 1];
-      const values = samples.map((item) => item.beatsPerMinute);
+      const trend = heartRateTrend.length > 0
+        ? heartRateTrend
+        : samples.map((sample) => ({
+            observedAt: sample.time,
+            beatsPerMinute: sample.beatsPerMinute,
+          }));
+      const values = trend.map((item) => item.beatsPerMinute);
       const minimum = Math.min(...values);
       const maximum = Math.max(...values);
       return (
         <MetricCard
           accent={colors.clay}
-          hint={`${samples.length} 个采样点 · 范围 ${minimum}–${maximum} 次/分 · 末次采样 ${formatDateTime(latest.time)}`}
+          hint={`近 6 小时 ${trend.length} 个采样点 · 范围 ${minimum}–${maximum} 次/分 · 末次采样 ${formatDateTime(latest.time)}`}
           observedAt={observation.observedAt}
           sourcePackage={observation.sourcePackage}
           title="心率"
@@ -784,7 +803,7 @@ function WearableCard({ observation }: { observation: WearableLatest }) {
           value={String(latest.beatsPerMinute)}
           wide
         >
-          <HeartRateBars samples={values} />
+          <HeartRateTrend points={trend} />
         </MetricCard>
       );
     }
@@ -920,31 +939,66 @@ function WearableCard({ observation }: { observation: WearableLatest }) {
   }
 }
 
-function HeartRateBars({ samples }: { samples: number[] }) {
-  const visible = samples.slice(-24);
-  const maximum = Math.max(...visible);
-  // Bars share a zero baseline; a small numerical change therefore remains
-  // visually small instead of being stretched to the full chart height.
-  const ceiling = Math.max(120, maximum);
+function HeartRateTrend({ points }: { points: HeartRateTrendPoint[] }) {
+  const values = points.map((point) => point.beatsPerMinute);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const firstTime = Date.parse(points[0].observedAt);
+  const lastTime = Date.parse(points[points.length - 1].observedAt);
+  const timeRange = Math.max(1, lastTime - firstTime);
+  const valueRange = Math.max(1, maximum - minimum);
+  const path = points
+    .map((point) => {
+      const x = 8 + ((Date.parse(point.observedAt) - firstTime) / timeRange) * 284;
+      const y = 58 - ((point.beatsPerMinute - minimum) / valueRange) * 48;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const lastCoordinates = path.split(' ').at(-1)?.split(',') ?? ['292', '34'];
   return (
     <View
-      accessibilityLabel={`心率采样：${visible.join('、')} 次/分`}
+      accessibilityLabel={`最近 6 小时心率趋势：共 ${points.length} 个采样点，范围 ${minimum}–${maximum} 次/分`}
       accessible
-      style={styles.heartChart}
+      style={styles.heartTrend}
     >
-      {visible.map((sample, index) => (
-        <View
-          key={`${index}-${sample}`}
-          style={[
-            styles.heartBar,
-            {
-              height: Math.max(3, (sample / ceiling) * 36),
-            },
-          ]}
+      <Svg height={68} viewBox="0 0 300 68" width="100%">
+        <Line stroke="#ECE6DC" strokeWidth={1} x1={8} x2={292} y1={10} y2={10} />
+        <Line stroke="#ECE6DC" strokeWidth={1} x1={8} x2={292} y1={34} y2={34} />
+        <Line stroke="#ECE6DC" strokeWidth={1} x1={8} x2={292} y1={58} y2={58} />
+        {points.length > 1 ? (
+          <Polyline
+            fill="none"
+            points={path}
+            stroke={colors.clay}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={3}
+          />
+        ) : null}
+        <Circle
+          cx={Number(lastCoordinates[0])}
+          cy={Number(lastCoordinates[1])}
+          fill={colors.card}
+          r={4}
+          stroke={colors.clay}
+          strokeWidth={3}
         />
-      ))}
+      </Svg>
+      <View style={styles.heartTrendLabels}>
+        <Text style={styles.heartTrendLabel}>{formatTrendTime(points[0].observedAt)}</Text>
+        <Text style={styles.heartTrendRange}>近 6 小时</Text>
+        <Text style={styles.heartTrendLabel}>{formatTrendTime(points[points.length - 1].observedAt)}</Text>
+      </View>
     </View>
   );
+}
+
+function formatTrendTime(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(value));
 }
 
 function SleepBand({ stages }: { stages: SleepStage[] }) {
@@ -1768,20 +1822,24 @@ const styles = StyleSheet.create({
     fontFamily: typefaces.sans,
     fontSize: 9,
   },
-  heartChart: {
-    height: 46,
-    marginTop: 11,
-    marginBottom: 12,
+  heartTrend: { marginTop: 9, marginBottom: 9 },
+  heartTrendLabels: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 2,
   },
-  heartBar: {
-    flex: 1,
-    minWidth: 3,
-    maxWidth: 13,
-    borderRadius: 4,
-    backgroundColor: '#D98263',
+  heartTrendLabel: {
+    color: colors.mutedInk,
+    fontFamily: typefaces.sans,
+    fontSize: 9,
+    fontVariant: ['tabular-nums'],
+  },
+  heartTrendRange: {
+    color: colors.clay,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 9,
+    fontWeight: '700',
   },
   sleepVisual: { paddingTop: 12, paddingBottom: 12, gap: 9 },
   sleepAxisLabel: {

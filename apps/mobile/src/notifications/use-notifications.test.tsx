@@ -75,6 +75,7 @@ const proactiveMessage: ChatMessage = {
   status: 'completed',
   content: '今天感觉怎么样？',
   sources: [],
+  attachments: [],
   createdAt: '2026-07-18T10:00:00Z',
   completedAt: '2026-07-18T10:00:01Z',
 };

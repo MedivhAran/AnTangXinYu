@@ -3,6 +3,7 @@ name: antang
 services:
   postgres:
     image: postgres:18.4-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
@@ -20,6 +21,7 @@ services:
   hindsight-postgres:
     build:
       context: ./infra/hindsight-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${HINDSIGHT_POSTGRES_DB:?HINDSIGHT_POSTGRES_DB is required}
       POSTGRES_USER: ${HINDSIGHT_POSTGRES_USER:?HINDSIGHT_POSTGRES_USER is required}
@@ -34,14 +36,22 @@ services:
 
   hindsight:
     image: ghcr.io/vectorize-io/hindsight-api:0.8.4@sha256:c4471d10ab96db4ba91b0d26fa1801d57f541fae08de5634a5e186478a2cfa86
+    restart: unless-stopped
+    env_file:
+      - ./api/.env
+    command:
+      - sh
+      - -c
+      - >-
+        export HINDSIGHT_API_LLM_API_KEY="$${HACHIMI_API_KEY}";
+        export HINDSIGHT_API_LLM_MODEL="$${HACHIMI_MODEL_NAME}";
+        export HINDSIGHT_API_LLM_BASE_URL="$${HACHIMI_BASE_URL}";
+        exec /app/start-all.sh
     environment:
       HINDSIGHT_API_DATABASE_URL: postgresql://${HINDSIGHT_POSTGRES_USER:?HINDSIGHT_POSTGRES_USER is required}:${HINDSIGHT_POSTGRES_PASSWORD:?HINDSIGHT_POSTGRES_PASSWORD is required}@hindsight-postgres:5432/${HINDSIGHT_POSTGRES_DB:?HINDSIGHT_POSTGRES_DB is required}
       HINDSIGHT_API_VECTOR_EXTENSION: pgvector
       HINDSIGHT_API_TEXT_SEARCH_EXTENSION: pgroonga
-      HINDSIGHT_API_LLM_PROVIDER: deepseek
-      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_LLM_API_KEY:?HINDSIGHT_LLM_API_KEY is required}
-      HINDSIGHT_API_LLM_MODEL: deepseek-v4-pro
-      HINDSIGHT_API_LLM_BASE_URL: https://api.deepseek.com
+      HINDSIGHT_API_LLM_PROVIDER: openai
       HINDSIGHT_API_LLM_OUTPUT_LANGUAGE: Simplified Chinese
       HINDSIGHT_API_EMBEDDINGS_PROVIDER: local
       HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL: BAAI/bge-m3
@@ -82,6 +92,7 @@ services:
 
   api:
     image: antang-api:local
+    restart: unless-stopped
     build:
       context: ./api
     env_file:
@@ -128,7 +139,7 @@ services:
         condition: service_healthy
       hindsight:
         condition: service_healthy
-    restart: on-failure
+    restart: unless-stopped
 
 volumes:
   postgres_data:

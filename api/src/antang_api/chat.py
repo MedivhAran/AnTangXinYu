@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from anyio import CancelScope
 from langchain.agents.middleware import InputAgentState
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -41,8 +42,11 @@ from antang_api.models import (
     CarePlan,
     CarePlanStatus,
     Message,
+    MessageAttachment,
+    MessageAttachmentKind,
     MessageRole,
     MessageStatus,
+    ProactiveCareSettings,
 )
 from antang_api.schemas.chat import (
     ActivityPhase,
@@ -64,6 +68,10 @@ class DuplicateClientMessageError(Exception):
 
 class ActiveAgentRunError(Exception):
     """当前用户已经有一个正在执行的顶层 Agent。"""
+
+
+class ChatAttachmentError(Exception):
+    """附件不存在、已发送，或者不属于当前用户。"""
 
 
 class ChatRetryError(Exception):
@@ -101,6 +109,7 @@ async def prepare_chat_run(
     user_id: UUID,
     client_message_id: UUID,
     content: str,
+    attachment_id: UUID | None = None,
 ) -> PreparedChatRun:
     """原子创建用户消息、待生成消息和 Core Agent 运行记录，提交到数据库"""
 
@@ -113,8 +122,28 @@ async def prepare_chat_run(
     )
     try:
         await lock_user_conversation(session, user_id)
+        attachment = None
+        if attachment_id is not None:
+            attachment = await session.scalar(
+                select(MessageAttachment)
+                .where(
+                    MessageAttachment.id == attachment_id,
+                    MessageAttachment.user_id == user_id,
+                )
+                .with_for_update()
+            )
+            if attachment is None or attachment.message_id is not None:
+                raise ChatAttachmentError("附件不存在或已经发送")
+            if not user_message.content:
+                user_message.content = (
+                    "请帮我解读这份报告。"
+                    if attachment.kind == MessageAttachmentKind.REPORT
+                    else "请帮我看看这张照片。"
+                )
         session.add(user_message)
         await session.flush()
+        if attachment is not None:
+            attachment.message_id = user_message.id
         await record_user_activity(
             session,
             user_id=user_id,
@@ -137,7 +166,7 @@ async def prepare_chat_run(
             result_message_id=assistant_message.id,
             parent_run_id=None,
             agent_name="core_agent",
-            model=settings.deepseek_model,
+            model=settings.hachimi_model_name,
             status=AgentRunStatus.RUNNING,
         )
         session.add(agent_run)
@@ -237,7 +266,7 @@ async def prepare_chat_retry(
             result_message_id=assistant_message.id,
             parent_run_id=None,
             agent_name="core_agent",
-            model=settings.deepseek_model,
+            model=settings.hachimi_model_name,
             status=AgentRunStatus.RUNNING,
         )
         session.add(agent_run)
@@ -501,7 +530,7 @@ async def _cancel_chat_run(
 
 async def stream_chat_run(
     session: AsyncSession,
-    model: ChatAnthropic,
+    model: BaseChatModel,
     agent: CoreAgentGraph,
     tools: Sequence[BaseTool],
     companion_memory: CompanionMemory,
@@ -519,7 +548,7 @@ async def stream_chat_run(
     run_log = logger.bind(
         run_id=str(prepared_run.run_id),
         user_id=str(user_id),
-        model=settings.deepseek_model,
+        model=settings.hachimi_model_name,
     )
     run_log.bind(status=AgentRunStatus.RUNNING.value).info("chat_run_started")
 
@@ -564,10 +593,21 @@ async def stream_chat_run(
             ],
             ensure_ascii=False,
         )
+        care_settings = await session.get(ProactiveCareSettings, user_id)
+        if care_settings is None:
+            raise RuntimeError("用户缺少主动关怀设置")
+        current_time_context = json.dumps(
+            {
+                "timezone": care_settings.timezone,
+                "now": datetime.now(ZoneInfo(care_settings.timezone)).isoformat(),
+            },
+            ensure_ascii=False,
+        )
         rendered_system_prompt = render_core_system_prompt(
             health_profile_context,
             companion_memory_context=companion_memory_context,
             care_plan_context=care_plan_context,
+            current_time_context=current_time_context,
         )
 
         prepared_context = await prepare_chat_context(

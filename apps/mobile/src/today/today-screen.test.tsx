@@ -14,6 +14,7 @@ import { TodayScreen } from './today-screen';
 void [ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View];
 
 const profile: HealthProfile = {
+  heartRateTrend: [],
   personalProfile: {
     sex: null,
     ageYears: null,

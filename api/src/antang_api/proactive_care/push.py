@@ -410,8 +410,9 @@ class PushDeliveryWorker:
                 "channelId": (
                     "health-care-v1"
                     if task.kind == ProactiveCareTaskKind.HEALTH_EVENT
-                    else "care-checkins-v1"
+                    else "care-checkins-v2"
                 ),
+                "sound": "default",
                 "collapseId": str(delivery.id),
                 "tag": str(delivery.id),
                 "ttl": max(

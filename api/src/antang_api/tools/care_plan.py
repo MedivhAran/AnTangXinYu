@@ -45,7 +45,7 @@ class CarePlanRequest(BaseModel):
         Field(
             min_length=1,
             max_length=500,
-            description="create、update 使用的简短计划内容。",
+            description="create、update 使用的简短提醒或回访内容。",
         ),
     ] = None
     follow_up_at: Annotated[
@@ -90,11 +90,12 @@ def build_care_plan_tool(
         request: CarePlanRequest,
         runtime: ToolRuntime[AgentContext],
     ) -> CarePlanResult:
-        """管理用户明确同意以后复盘的一项计划。
+        """管理用户明确要求的一次性提醒或计划回访。
 
-        只有用户明确同意创建、修改、完成或取消计划，并且对话中已有明确的
-        回访时间时才能调用。普通闹钟、提醒、含糊的“以后再说”和模型自行
-        提议都不能创建计划；信息不足时先追问。调用必须独占当前工具轮次。
+        只有用户明确要求创建、修改、完成或取消，并且对话中已有明确的
+        提醒或回访内容和时间时才能调用。相对时间可以根据服务器提供的当前时间换算。
+        含糊的“以后再说”和模型自行提议不能创建；信息不足时先追问。
+        调用必须独占当前工具轮次。
         """
 
         tool_call_id = runtime.tool_call_id

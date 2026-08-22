@@ -48,6 +48,11 @@ const profile: HealthProfile = {
       updatedAt: '2026-07-25T10:00:00+08:00',
     },
   ],
+  heartRateTrend: [
+    { observedAt: '2026-07-26T18:00:00+08:00', beatsPerMinute: 72 },
+    { observedAt: '2026-07-26T20:00:00+08:00', beatsPerMinute: 81 },
+    { observedAt: '2026-07-26T21:59:00+08:00', beatsPerMinute: 78 },
+  ],
   wearableLatest: [
     {
       recordType: 'heart_rate',
@@ -102,6 +107,7 @@ const emptyProfile: HealthProfile = {
     updatedAt: '2026-07-26T12:00:00+08:00',
   },
   healthFacts: [],
+  heartRateTrend: [],
   wearableLatest: [],
 };
 
@@ -134,7 +140,7 @@ describe('HealthOverviewScreen', () => {
     ).toBeTruthy();
     expect(
       tree!.root.findByProps({
-        accessibilityLabel: '心率采样：76、78 次/分',
+        accessibilityLabel: '最近 6 小时心率趋势：共 3 个采样点，范围 72–81 次/分',
       }),
     ).toBeTruthy();
     expect(
@@ -148,7 +154,7 @@ describe('HealthOverviewScreen', () => {
       tree!.root.findAll(
         (node) =>
           typeof node.props.children === 'string' &&
-          node.props.children.includes('范围 76–78 次/分'),
+          node.props.children.includes('范围 72–81 次/分'),
       ).length,
     ).toBeGreaterThan(0);
 
@@ -184,10 +190,10 @@ describe('HealthOverviewScreen', () => {
     act(() => tree!.unmount());
   });
 
-  test('keeps the current reading visible while a manual refresh is running', async () => {
-    let resolveRefresh!: (value: HealthProfile) => void;
-    const refreshPromise = new Promise<HealthProfile>((resolve) => {
-      resolveRefresh = resolve;
+  test('syncs Health Connect before refreshing the displayed readings', async () => {
+    let resolveSync!: () => void;
+    const syncPromise = new Promise<void>((resolve) => {
+      resolveSync = resolve;
     });
     const refreshedProfile: HealthProfile = {
       ...profile,
@@ -211,33 +217,40 @@ describe('HealthOverviewScreen', () => {
       getHealthProfile: jest
         .fn()
         .mockResolvedValueOnce(profile)
-        .mockReturnValueOnce(refreshPromise),
+        .mockResolvedValueOnce(refreshedProfile),
     } as unknown as ApiClient;
+    const onSyncWearable = jest.fn().mockReturnValue(syncPromise);
     let tree: ReturnType<typeof create>;
 
     await act(async () => {
       tree = create(
-        <HealthOverviewScreen api={api} onClose={jest.fn()} />,
+        <HealthOverviewScreen
+          api={api}
+          onClose={jest.fn()}
+          onSyncWearable={onSyncWearable}
+        />,
       );
     });
     await act(async () => {
       tree!.root
-        .findByProps({ accessibilityLabel: '刷新健康数据' })
+        .findByProps({ accessibilityLabel: '同步 Health Connect 数据' })
         .props.onPress();
       await Promise.resolve();
     });
 
-    expect(api.getHealthProfile).toHaveBeenCalledTimes(2);
+    expect(onSyncWearable).toHaveBeenCalledTimes(1);
+    expect(api.getHealthProfile).toHaveBeenCalledTimes(1);
     expect(
-      tree!.root.findByProps({ accessibilityLabel: '刷新健康数据' }).props
+      tree!.root.findByProps({ accessibilityLabel: '同步 Health Connect 数据' }).props
         .accessibilityState,
     ).toEqual({ busy: true, disabled: true });
     expect(tree!.root.findByProps({ children: '78' })).toBeTruthy();
 
     await act(async () => {
-      resolveRefresh(refreshedProfile);
-      await refreshPromise;
+      resolveSync();
+      await syncPromise;
     });
+    expect(api.getHealthProfile).toHaveBeenCalledTimes(2);
     expect(tree!.root.findByProps({ children: '82' })).toBeTruthy();
     act(() => tree!.unmount());
   });
@@ -676,7 +689,7 @@ describe('HealthOverviewScreen', () => {
     });
 
     await act(async () => {
-      tree!.root.findByProps({ accessibilityLabel: '刷新健康数据' }).props.onPress();
+      tree!.root.findByProps({ accessibilityLabel: '同步 Health Connect 数据' }).props.onPress();
       await Promise.resolve();
     });
     expect(

@@ -1,4 +1,3 @@
-import asyncio
 import json
 from datetime import datetime, time, timedelta, timezone
 from typing import Any, cast
@@ -7,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware import InputAgentState
 from langchain.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,6 +25,7 @@ from antang_api.agents.proactive_care import (
 )
 from antang_api.agents.runtime import AgentContext
 from antang_api.companion_memory import CompanionMemory
+from antang_api.context import count_input_tokens
 from antang_api.database import (
     lock_user_conversation,
     session_factory as default_session_factory,
@@ -542,10 +542,10 @@ class ProactiveCareProcessor:
 
         model_text = json.dumps(context_payload, ensure_ascii=False)
         model_message = HumanMessage(content=model_text)
-        input_tokens = await asyncio.to_thread(
-            self._token_model.get_num_tokens_from_messages,
-            [SystemMessage(content=AGENT_SYSTEM_PROMPT), model_message],
-            tools=[ProactiveCareDecision],
+        input_tokens = await count_input_tokens(
+            self._token_model,
+            AGENT_SYSTEM_PROMPT,
+            [model_message],
         )
         if input_tokens > MAX_PROACTIVE_INPUT_TOKENS:
             raise RuntimeError("主动关怀 Agent 输入超过 20000 tokens")
@@ -656,10 +656,10 @@ class ProactiveCareProcessor:
             ensure_ascii=False,
         )
         audit_message = HumanMessage(content=audit_text)
-        audit_input_tokens = await asyncio.to_thread(
-            self._token_model.get_num_tokens_from_messages,
-            [SystemMessage(content=AUDITOR_SYSTEM_PROMPT), audit_message],
-            tools=[ProactiveCareAudit],
+        audit_input_tokens = await count_input_tokens(
+            self._token_model,
+            AUDITOR_SYSTEM_PROMPT,
+            [audit_message],
         )
         if audit_input_tokens > MAX_PROACTIVE_INPUT_TOKENS:
             raise RuntimeError("主动关怀 Auditor 输入超过 20000 tokens")

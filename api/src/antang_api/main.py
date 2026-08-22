@@ -13,8 +13,8 @@ from antang_api.chat import recover_interrupted_chat_runs
 from antang_api.companion_memory import CompanionMemory
 from antang_api.database import engine, session_factory
 from antang_api.llm import (
-    build_deepseek_model,
-    build_deepseek_non_streaming_model,
+    build_chat_model,
+    build_non_streaming_model,
 )
 from antang_api.log_config import configure_logging
 from antang_api.routers.auth import router as auth_router
@@ -60,8 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 api_key=settings.tavily_api_key.get_secret_value(),
                 client_name="antang-api",
             ) as tavily_client:
-                chat_model = build_deepseek_model()
-                health_profile_model = build_deepseek_non_streaming_model()
+                chat_model = build_chat_model()
+                health_profile_model = build_non_streaming_model()
 
                 wearable_tool = build_wearable_read_tool(session_factory)
                 health_profile_agent = build_profile_agent(
@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
                 health_profile_delegate = build_profile_tool(
                     health_profile_agent,
-                    model_name=settings.deepseek_model,
+                    model_name=settings.hachimi_model_name,
                     session_factory=session_factory,
                 )
                 care_plan_tool = build_care_plan_tool(session_factory)

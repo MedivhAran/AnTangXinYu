@@ -26,7 +26,7 @@ from sqlalchemy import delete, select
 from antang_api.agents.core import SYSTEM_PROMPT, build_core_agent
 from antang_api.agents.runtime import AgentContext
 from antang_api.database import session_factory
-from antang_api.llm import build_deepseek_model
+from antang_api.llm import build_chat_model
 from antang_api.models import AgentRun, AgentRunStatus, AgentToolCall, Message, User
 from antang_api.settings import settings
 from evals.web_search.cases import WebEvalCase, build_cases
@@ -706,7 +706,7 @@ async def _run_prompt_injection_probe() -> dict[str, Any]:
             exfil_marker=exfil_marker,
             calls=calls,
         )
-        model = build_deepseek_model()
+        model = build_chat_model()
         checkpointer = InMemorySaver()
         agent = build_core_agent(
             model,

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
@@ -27,6 +28,7 @@ from antang_api.health_profile.service import (
 from antang_api.health_profile.wearable_service import (
     process_wearable_import,
     read_latest_wearable_observations,
+    read_wearable_observations,
 )
 from antang_api.proactive_care.service import record_health_import
 from antang_api.models import (
@@ -34,12 +36,15 @@ from antang_api.models import (
     ProfileChangeMode,
     ProfileChangeStatus,
     User,
+    WearableRecordType,
 )
 from antang_api.routers.auth import get_current_user
 from antang_api.schemas.health_profile import (
     HealthProfileChangeRequest,
     HealthProfileChangeResponse,
     HealthProfileResponse,
+    HeartRateData,
+    HeartRateTrendPointResponse,
     ProfileCardAnswerRequest,
     ProfileCardDecisionRequest,
     ProfileCardDecisionResponse,
@@ -63,6 +68,22 @@ async def get_health_profile(
         session,
         user_id=user.id,
     )
+    trend_end = datetime.now(UTC)
+    trend_start = trend_end - timedelta(hours=6)
+    heart_rate_observations = await read_wearable_observations(
+        session,
+        user_id=user.id,
+        record_types=[WearableRecordType.HEART_RATE],
+        start=trend_start,
+        end=trend_end,
+        limit=5000,
+    )
+    heart_rate_points = {
+        sample.time: sample.beats_per_minute
+        for observation in heart_rate_observations
+        for sample in HeartRateData.model_validate(observation.data).samples
+        if trend_start <= sample.time <= trend_end
+    }
     return HealthProfileResponse(
         personal_profile=snapshot.personal_profile,
         health_facts=snapshot.health_facts,
@@ -74,6 +95,13 @@ async def get_health_profile(
                 source_package=item.source_package,
             )
             for item in latest
+        ],
+        heart_rate_trend=[
+            HeartRateTrendPointResponse(
+                observed_at=observed_at,
+                beats_per_minute=beats_per_minute,
+            )
+            for observed_at, beats_per_minute in sorted(heart_rate_points.items())
         ],
     )
 

@@ -93,9 +93,10 @@ async function expoPushToken(
 }
 
 async function createChannels(): Promise<void> {
-  await Notifications.setNotificationChannelAsync('care-checkins-v1', {
+  await Notifications.setNotificationChannelAsync('care-checkins-v2', {
     name: '日常与计划关怀',
-    importance: Notifications.AndroidImportance.DEFAULT,
+    importance: Notifications.AndroidImportance.HIGH,
+    sound: 'default',
   });
   await Notifications.setNotificationChannelAsync('health-care-v1', {
     name: '健康关怀',

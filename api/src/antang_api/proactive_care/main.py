@@ -10,7 +10,7 @@ from antang_api.agents.proactive_care import (
 )
 from antang_api.companion_memory import CompanionMemory
 from antang_api.database import engine
-from antang_api.llm import build_deepseek_non_streaming_model
+from antang_api.llm import build_non_streaming_model
 from antang_api.log_config import configure_logging
 from antang_api.proactive_care.processor import ProactiveCareProcessor
 from antang_api.proactive_care.push import ExpoPushClient, PushDeliveryWorker
@@ -41,7 +41,7 @@ async def run_worker() -> None:
                 settings.langgraph_database_url
             ) as checkpointer:
                 await checkpointer.setup()
-                model = build_deepseek_non_streaming_model()
+                model = build_non_streaming_model()
                 processor = ProactiveCareProcessor(
                     agent=build_proactive_care_agent(model, checkpointer),
                     auditor=build_proactive_care_auditor(model, checkpointer),
@@ -53,7 +53,7 @@ async def run_worker() -> None:
                         recall_max_tokens=settings.hindsight_recall_max_tokens,
                     ),
                     token_model=model,
-                    model_name=settings.deepseek_model,
+                    model_name=settings.hachimi_model_name,
                 )
                 access_token = (
                     settings.expo_push_access_token.get_secret_value()

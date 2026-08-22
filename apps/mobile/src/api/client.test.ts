@@ -6,6 +6,8 @@ import {
 } from './client';
 import type { TokenPair } from './types';
 import type { TokenStore } from '../auth/token-store';
+import { convertFormDataAsync } from 'expo/src/winter/fetch/convertFormData';
+import { File, Paths } from 'expo-file-system';
 
 const oldTokens: TokenPair = {
   accessToken: 'old-access',
@@ -315,6 +317,50 @@ describe('ApiClient authentication', () => {
 });
 
 describe('ApiClient chat', () => {
+  test('builds an attachment body accepted by expo fetch', async () => {
+    const sourceFile = new File(Paths.cache, `attachment-upload-${Date.now()}.pdf`);
+    sourceFile.create();
+    sourceFile.write('%PDF-test');
+    const OriginalFormData = global.FormData;
+    const RNFormData = jest.requireActual(
+      'react-native/Libraries/Network/FormData',
+    ).default;
+    const { installFormDataPatch } = jest.requireActual(
+      'expo/src/winter/FormData',
+    );
+    global.FormData = installFormDataPatch(RNFormData);
+    const fetchMock = jest.fn(async (_input: string | URL, init?: RequestInit) => {
+      await convertFormDataAsync(init?.body as FormData);
+      return jsonResponse(200, {
+        id: '019b8888-8888-7888-8888-888888888888',
+        kind: 'report',
+        filename: 'report.pdf',
+        mime_type: 'application/pdf',
+        size_bytes: 8,
+      });
+    });
+    const client = new ApiClient(
+      'http://api.test',
+      new MemoryTokenStore(oldTokens),
+      jest.fn(),
+      fetchMock as FetchFunction,
+    );
+
+    try {
+      await expect(
+        client.uploadChatAttachment({
+          kind: 'report',
+          mimeType: 'application/pdf',
+          name: 'report.pdf',
+          uri: sourceFile.uri,
+        }),
+      ).resolves.toMatchObject({ filename: 'report.pdf' });
+    } finally {
+      global.FormData = OriginalFormData;
+      sourceFile.delete();
+    }
+  });
+
   test('retries a failed assistant message through the normal chat stream', async () => {
     const failedAssistantMessageId = '019b2222-2222-7222-8222-222222222222';
     const userMessageId = '019b1111-1111-7111-8111-111111111111';
@@ -456,6 +502,16 @@ describe('ApiClient health profile', () => {
           updated_at: '2026-07-26T12:00:00+00:00',
         },
         health_facts: [],
+        heart_rate_trend: [
+          {
+            observed_at: '2026-07-26T06:58:00+08:00',
+            beats_per_minute: 61,
+          },
+          {
+            observed_at: '2026-07-26T07:00:00+08:00',
+            beats_per_minute: 63,
+          },
+        ],
         wearable_latest: [
           {
             record_type: 'resting_heart_rate',
@@ -477,6 +533,10 @@ describe('ApiClient health profile', () => {
     await expect(client.getHealthProfile(controller.signal)).resolves.toMatchObject({
       personalProfile: { revision: 0 },
       healthFacts: [],
+      heartRateTrend: [
+        { observedAt: '2026-07-26T06:58:00+08:00', beatsPerMinute: 61 },
+        { observedAt: '2026-07-26T07:00:00+08:00', beatsPerMinute: 63 },
+      ],
       wearableLatest: [
         {
           recordType: 'resting_heart_rate',

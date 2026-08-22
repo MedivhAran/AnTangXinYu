@@ -1,5 +1,8 @@
 from collections.abc import Sequence
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, TypeAlias, cast
+from uuid import UUID
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
@@ -21,7 +24,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from antang_api.agents.runtime import AgentContext
 from antang_api.agents.tool_middleware import ToolPersistenceMiddleware
 from antang_api.database import session_factory as default_session_factory
-from antang_api.health_profile.types import ProfileProposal
+from antang_api.health_profile.types import (
+    ClarificationReason,
+    HealthFactProposal,
+    PersonalProfileProposal,
+    PersonalProfileUnit,
+    ProfileProposal,
+)
+from antang_api.models import (
+    FactAssertion,
+    FactTemporalStatus,
+    HealthFactType,
+    PersonalProfileField,
+    ProfileChangeMode,
+    ProfileOperation,
+    ProfileTargetType,
+)
 
 PROFILE_AGENT_NAME = "health_profile_manager"
 MAX_MODEL_CALLS = 4
@@ -55,11 +73,90 @@ class ProfileDecision(BaseModel):
     proposals: Annotated[list[ProfileProposal], Field(max_length=10)]
 
 
+class ProfileAgentProposal(BaseModel):
+    """避免模型供应商无法处理 discriminated union 的扁平输出格式。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: ProfileTargetType
+    mode: ProfileChangeMode
+    evidence_quote: Annotated[str, Field(min_length=1, max_length=1000)]
+    clarification_reason: ClarificationReason | None = None
+    resolves_change_id: UUID | None = None
+    field_name: PersonalProfileField | None = None
+    fact_type: HealthFactType | None = None
+    operation: ProfileOperation
+    value: str | int | Decimal | None = None
+    unit: PersonalProfileUnit | None = None
+    target_id: UUID | None = None
+    statement: Annotated[str | None, Field(max_length=2000)] = None
+    assertion: FactAssertion | None = None
+    temporal_status: FactTemporalStatus | None = None
+    effective_start: date | None = None
+    effective_end: date | None = None
+
+    def to_profile_proposal(self) -> ProfileProposal:
+        common = {
+            "mode": self.mode,
+            "evidence_quote": self.evidence_quote,
+            "clarification_reason": self.clarification_reason,
+            "resolves_change_id": self.resolves_change_id,
+        }
+        if self.target_type is ProfileTargetType.PERSONAL_PROFILE:
+            value = self.value
+            if isinstance(value, str) and self.field_name in {
+                PersonalProfileField.AGE_YEARS,
+                PersonalProfileField.HEIGHT_CM,
+                PersonalProfileField.WEIGHT_KG,
+            }:
+                try:
+                    number = Decimal(value)
+                except InvalidOperation:
+                    pass
+                else:
+                    value = (
+                        int(number)
+                        if self.field_name is PersonalProfileField.AGE_YEARS
+                        and number == number.to_integral_value()
+                        else number
+                    )
+            return PersonalProfileProposal.model_validate(
+                {
+                    **common,
+                    "field_name": self.field_name,
+                    "operation": self.operation,
+                    "value": value,
+                    "unit": self.unit,
+                }
+            )
+        return HealthFactProposal.model_validate(
+            {
+                **common,
+                "fact_type": self.fact_type,
+                "operation": self.operation,
+                "target_id": self.target_id,
+                "statement": self.statement,
+                "assertion": self.assertion,
+                "temporal_status": self.temporal_status,
+                "effective_start": self.effective_start,
+                "effective_end": self.effective_end,
+            }
+        )
+
+
+class ProfileAgentDecision(BaseModel):
+    """健康档案模型实际看到的结构化输出格式。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposals: Annotated[list[ProfileAgentProposal], Field(max_length=10)]
+
+
 ProfileAgentGraph: TypeAlias = CompiledStateGraph[
-    AgentState[ProfileDecision],
+    AgentState[ProfileAgentDecision],
     AgentContext | None,
     InputAgentState,
-    OutputAgentState[ProfileDecision],
+    OutputAgentState[ProfileAgentDecision],
 ]
 ProfileAgentMiddleware: TypeAlias = AgentMiddleware[
     AgentState[Any], AgentContext | None, Any
@@ -84,7 +181,7 @@ def build_profile_agent(
                     session_factory,
                     max_tool_rounds=MAX_TOOL_ROUNDS,
                     max_parallel_tool_calls=MAX_PARALLEL_TOOL_CALLS,
-                    ignored_tool_names=frozenset({ProfileDecision.__name__}),
+                    ignored_tool_names=frozenset({ProfileAgentDecision.__name__}),
                     # Core 已经在 delegate_health_profile 上显示“更新档案”。
                     # 子 Agent 的内部手环工具不再向顶层流发送未知活动事件。
                     emit_activity=False,
@@ -107,7 +204,7 @@ def build_profile_agent(
         system_prompt=SYSTEM_PROMPT,
         middleware=middleware,
         response_format=ToolStrategy(
-            ProfileDecision,
+            ProfileAgentDecision,
             handle_errors=False,
             tool_message_content="健康档案候选已经生成。",
         ),
@@ -123,8 +220,14 @@ def extract_decision(
     """取得严格结果和本次子 Agent 的真实 token 用量。"""
 
     structured_response = final_state.get("structured_response")
-    if not isinstance(structured_response, ProfileDecision):
+    if not isinstance(structured_response, ProfileAgentDecision):
         raise RuntimeError("健康档案 Agent 缺少结构化结果")
+    decision = ProfileDecision(
+        proposals=[
+            proposal.to_profile_proposal()
+            for proposal in structured_response.proposals
+        ]
+    )
 
     messages = cast(list[BaseMessage], final_state.get("messages", []))
     input_tokens = 0
@@ -143,4 +246,4 @@ def extract_decision(
     if model_message_count == 0:
         raise RuntimeError("健康档案 Agent 没有模型响应")
 
-    return structured_response, input_tokens, output_tokens
+    return decision, input_tokens, output_tokens

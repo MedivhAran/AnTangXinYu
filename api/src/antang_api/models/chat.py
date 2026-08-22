@@ -2,12 +2,14 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     Uuid,
@@ -33,6 +35,13 @@ class MessageStatus(str, Enum):
     COMPLETED = "completed"  # 已完成
     FAILED = "failed"  # 生成失败
     CANCELLED = "cancelled"  # 已取消
+
+
+class MessageAttachmentKind(str, Enum):
+    """用户发送到聊天中的附件类型。"""
+
+    PHOTO = "photo"
+    REPORT = "report"
 
 
 class AgentRunStatus(str, Enum):
@@ -105,6 +114,44 @@ class Message(Base):
     # 用户消息不需要完成时间，因此可以为None，AI消息刚创建时也没有completed_at
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+    )
+
+
+class MessageAttachment(Base):
+    """保存用户上传的原始图片或 PDF，并在发送时绑定一条消息。"""
+
+    __tablename__ = "message_attachments"
+    __table_args__ = (
+        Index("ix_message_attachments_user_id_id", "user_id", "id"),
+        CheckConstraint("size_bytes > 0", name="ck_message_attachments_positive_size"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid,
+        primary_key=True,
+        server_default=text("uuidv7()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+    )
+    message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    kind: Mapped[MessageAttachmentKind] = mapped_column(
+        SqlEnum(
+            MessageAttachmentKind,
+            name="message_attachment_kind",
+            values_callable=enum_values,
+        )
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
     )
 
 

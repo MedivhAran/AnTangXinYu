@@ -157,6 +157,12 @@ def test_core_prompt_interprets_short_replies_from_the_latest_question() -> None
     assert "不要额外猜测原因" in SYSTEM_PROMPT
 
 
+def test_core_prompt_allows_one_time_reminders_with_relative_times() -> None:
+    assert "一次性提醒或计划回访" in SYSTEM_PROMPT
+    assert "相对时间是有效时间" in SYSTEM_PROMPT
+    assert "不支持的普通倒计时或提醒" not in SYSTEM_PROMPT
+
+
 async def test_core_model_rejects_missing_dynamic_prompt() -> None:
     messages: list[AnyMessage] = [HumanMessage(content="你好")]
     request: ModelRequest[AgentContext | None] = ModelRequest(

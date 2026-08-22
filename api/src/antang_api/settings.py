@@ -1,4 +1,5 @@
 from typing import Literal, Self
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -7,11 +8,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """从.env文件中读取配置"""
 
-    deepseek_api_key: SecretStr = Field(min_length=1)
-    deepseek_model: str = Field(min_length=1)
-    deepseek_timeout_seconds: float = Field(gt=0)
-    deepseek_anthropic_base_url: str = "https://api.deepseek.com/anthropic"
-    deepseek_max_output_tokens: int = Field(default=4096, gt=0)
+    hachimi_api_key: SecretStr = Field(min_length=1)
+    hachimi_model_name: str = Field(min_length=1)
+    hachimi_base_url: str = Field(min_length=1)
+    hachimi_timeout_seconds: float = Field(default=300, gt=0)
+    hachimi_max_output_tokens: int = Field(default=4096, gt=0)
+
     tavily_api_key: SecretStr = Field(min_length=1)
     # Tavily 没有承诺最终字符串的总上限；以下是项目自己的初始安全边界。
     tavily_search_max_snippet_chars: int = Field(default=2_000, gt=0)
@@ -46,7 +48,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="forbid",
+        # 允许旧 .env 在迁移期间保留已经不再读取的供应商变量。
+        extra="ignore",
     )
 
     # 输入达到 150000 token触发压缩
@@ -80,6 +83,18 @@ class Settings(BaseSettings):
         """把 SQLAlchemy 的地址转换成 psycopg 直接使用的地址"""
         sqlalchemy_prefix = "postgresql+psycopg://"
         return "postgresql://" + self.database_url.removeprefix(sqlalchemy_prefix)
+
+    @property
+    def hachimi_openai_base_url(self) -> str:
+        """把配置中的完整 Chat Completions 地址转换成 SDK 的基础地址。"""
+
+        parsed = urlsplit(self.hachimi_base_url)
+        path = "/" + "/".join(part for part in parsed.path.split("/") if part)
+        value = urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
+        suffix = "/chat/completions"
+        if value.endswith(suffix):
+            value = value[: -len(suffix)]
+        return value
 
     @model_validator(mode="after")
     def validate_hindsight(self) -> Self:

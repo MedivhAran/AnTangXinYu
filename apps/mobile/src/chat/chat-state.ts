@@ -1,5 +1,6 @@
 import type {
   AgentActivityPhase,
+  ChatAttachment,
   ChatMessage,
   ChatStreamEvent,
 } from '../api/types';
@@ -12,6 +13,7 @@ export type ChatState = {
   activity: AgentActivityPhase | null;
   error: string | null;
   pendingRequestId: string | null;
+  retrySourceMessageId: string | null;
 };
 
 export const initialChatState: ChatState = {
@@ -22,6 +24,7 @@ export const initialChatState: ChatState = {
   activity: null,
   error: null,
   pendingRequestId: null,
+  retrySourceMessageId: null,
 };
 
 type ChatAction =
@@ -30,8 +33,19 @@ type ChatAction =
   | { type: 'history-prepended'; messages: ChatMessage[]; nextBefore: string | null }
   | { type: 'history-merged'; messages: ChatMessage[] }
   | { type: 'history-failed'; message: string }
-  | { type: 'send-started'; clientMessageId: string; content: string; now: string }
-  | { type: 'retry-started'; requestId: string; now: string }
+  | {
+      type: 'send-started';
+      clientMessageId: string;
+      content: string;
+      attachment: ChatAttachment | null;
+      now: string;
+    }
+  | {
+      type: 'retry-started';
+      requestId: string;
+      failedAssistantMessageId: string;
+      now: string;
+    }
   | { type: 'stream-event'; event: ChatStreamEvent }
   | { type: 'request-rejected'; requestId: string; message: string | null }
   | { type: 'request-cancelled' }
@@ -88,6 +102,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         sending: hasGeneratingAssistant(action.messages),
         activity: null,
         pendingRequestId: null,
+        retrySourceMessageId: null,
         error: null,
       };
 
@@ -121,6 +136,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         status: 'completed',
         content: action.content,
         sources: [],
+        attachments: action.attachment === null ? [] : [action.attachment],
         createdAt: action.now,
         completedAt: null,
       };
@@ -131,6 +147,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         status: 'generating',
         content: '',
         sources: [],
+        attachments: [],
         createdAt: action.now,
         completedAt: null,
       };
@@ -145,6 +162,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         sending: true,
         activity: 'thinking',
         pendingRequestId: action.clientMessageId,
+        retrySourceMessageId: null,
         error: null,
       };
     }
@@ -158,6 +176,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         status: 'generating',
         content: '',
         sources: [],
+        attachments: [],
         createdAt: action.now,
         completedAt: null,
       };
@@ -167,6 +186,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         sending: true,
         activity: 'thinking',
         pendingRequestId: action.requestId,
+        retrySourceMessageId: action.failedAssistantMessageId,
         error: null,
       };
     }
@@ -179,15 +199,18 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         if (requestId === null) throw new Error('message_started 没有对应的本地消息');
         return {
           ...state,
-          messages: state.messages.map((message) => {
-            if (message.id === `local-user-${requestId}`) {
-              return { ...message, id: event.userMessageId };
-            }
-            if (message.id === `local-assistant-${requestId}`) {
-              return { ...message, id: event.assistantMessageId };
-            }
-            return message;
-          }),
+          messages: state.messages
+            .filter((message) => message.id !== state.retrySourceMessageId)
+            .map((message) => {
+              if (message.id === `local-user-${requestId}`) {
+                return { ...message, id: event.userMessageId };
+              }
+              if (message.id === `local-assistant-${requestId}`) {
+                return { ...message, id: event.assistantMessageId };
+              }
+              return message;
+            }),
+          retrySourceMessageId: null,
         };
       }
 
@@ -218,6 +241,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           sending: false,
           activity: null,
           pendingRequestId: null,
+          retrySourceMessageId: null,
         };
       }
 
@@ -246,6 +270,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         sending: false,
         activity: null,
         pendingRequestId: null,
+        retrySourceMessageId: null,
         error: action.message,
       };
 
@@ -272,6 +297,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         sending: false,
         activity: null,
         pendingRequestId: null,
+        retrySourceMessageId: null,
         error,
       };
     }

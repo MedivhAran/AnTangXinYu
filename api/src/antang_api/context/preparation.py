@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from uuid import UUID
 
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,7 +44,7 @@ class PreparedChatContext:
 async def _clear_tool_results_when_needed(
     context: ChatContext,
     input_tokens: int,
-    model: ChatAnthropic,
+    model: BaseChatModel,
     system_prompt: str,
     tools: Sequence[BaseTool] | None,
     cleanup_trigger_tokens: int,
@@ -72,7 +72,7 @@ async def _clear_tool_results_when_needed(
 
 async def prepare_chat_context(
     session: AsyncSession,
-    model: ChatAnthropic,
+    model: BaseChatModel,
     system_prompt: str,
     user_id: UUID,
     through_message_id: UUID,

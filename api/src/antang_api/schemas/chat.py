@@ -3,13 +3,20 @@ from typing import Annotated, Literal, TypeAlias
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
-from antang_api.models import MessageRole, MessageStatus
+from antang_api.models import MessageAttachmentKind, MessageRole, MessageStatus
 
 MessageContent = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
+    StringConstraints(strip_whitespace=True, max_length=2000),
 ]
 ActivityPhase: TypeAlias = Literal[
     "thinking",
@@ -25,6 +32,29 @@ class SendMessageRequest(BaseModel):
     # 由手机生成。同一次发送即使因网络问题重试，也继续使用同一个 ID。
     client_message_id: UUID
     content: MessageContent
+    attachment_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "SendMessageRequest":
+        if not self.content and self.attachment_id is None:
+            raise ValueError("消息文字和附件不能同时为空")
+        return self
+
+
+class ChatAttachmentResponse(BaseModel):
+    """聊天历史中展示附件所需的元数据。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    kind: MessageAttachmentKind
+    filename: str
+    mime_type: str
+    size_bytes: int
+
+
+class AttachmentUploadResponse(ChatAttachmentResponse):
+    """附件上传成功后的响应。"""
 
 
 ## 聊天流包含消息生命周期、Agent 活动阶段和文字增量。
@@ -132,6 +162,7 @@ class ChatMessageResponse(BaseModel):
     status: MessageStatus
     content: str
     sources: list[ChatSource]
+    attachments: list[ChatAttachmentResponse] = Field(default_factory=list)
     created_at: datetime
     completed_at: datetime | None
 

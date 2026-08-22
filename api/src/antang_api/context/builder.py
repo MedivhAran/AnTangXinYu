@@ -1,4 +1,5 @@
 import json
+import base64
 from collections import defaultdict
 from dataclasses import dataclass
 from uuid import UUID
@@ -20,6 +21,7 @@ from antang_api.models import (
     AgentToolCallStatus,
     ConversationSummary,
     Message,
+    MessageAttachment,
     MessageRole,
     MessageStatus,
 )
@@ -43,11 +45,38 @@ class ChatContext:
     summary_through_message_id: UUID | None
 
 
-def to_model_message(message: Message) -> BaseMessage:
+def to_model_message(
+    message: Message,
+    attachment: MessageAttachment | None = None,
+) -> BaseMessage:
     """把数据库中的原始消息转换成 LangChain 消息。"""
 
     match message.role:
         case MessageRole.USER:
+            if attachment is not None:
+                encoded = base64.b64encode(attachment.data).decode("ascii")
+                file_part: dict[str, object]
+                if attachment.mime_type == "application/pdf":
+                    file_part = {
+                        "type": "file",
+                        "file": {
+                            "filename": attachment.filename,
+                            "file_data": f"data:{attachment.mime_type};base64,{encoded}",
+                        },
+                    }
+                else:
+                    file_part = {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{attachment.mime_type};base64,{encoded}",
+                        },
+                    }
+                return HumanMessage(
+                    content=[
+                        file_part,
+                        {"type": "text", "text": message.content},
+                    ]
+                )
             return HumanMessage(content=message.content)
 
         case MessageRole.ASSISTANT:
@@ -56,10 +85,13 @@ def to_model_message(message: Message) -> BaseMessage:
     raise ValueError(f"无法转换消息角色：{message.role}")
 
 
-def to_historical_model_message(message: Message) -> BaseMessage:
+def to_historical_model_message(
+    message: Message,
+    attachment: MessageAttachment | None = None,
+) -> BaseMessage:
     """把历史聊天交给模型，并移除只对原回答有效的来源编号。"""
 
-    model_message = to_model_message(message)
+    model_message = to_model_message(message, attachment)
     if message.role != MessageRole.ASSISTANT or not message.sources:
         return model_message
 
@@ -251,6 +283,20 @@ async def build_chat_context(
             message_query.order_by(Message.id),
         )
     )
+    attachments = list(
+        await session.scalars(
+            select(MessageAttachment).where(
+                MessageAttachment.message_id.in_(
+                    [message.id for message in saved_messages]
+                )
+            )
+        )
+    ) if saved_messages else []
+    attachments_by_message = {
+        attachment.message_id: attachment
+        for attachment in attachments
+        if attachment.message_id is not None
+    }
 
     result_message_ids = [
         message.id
@@ -278,7 +324,12 @@ async def build_chat_context(
     for message in saved_messages:
         # 工具调用属于生成这条最终助手消息的 AgentRun，必须紧挨着放在它前面。
         model_messages.extend(tool_messages_by_result.get(message.id, ()))
-        model_messages.append(to_historical_model_message(message))
+        model_messages.append(
+            to_historical_model_message(
+                message,
+                attachments_by_message.get(message.id),
+            )
+        )
 
     return ChatContext(
         messages=tuple(model_messages),

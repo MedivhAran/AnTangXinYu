@@ -19,6 +19,8 @@ from antang_api.models import (
     AgentRun,
     AgentRunStatus,
     Message,
+    MessageAttachment,
+    MessageAttachmentKind,
     MessageRole,
     MessageStatus,
 )
@@ -89,6 +91,37 @@ async def test_send_message_requires_authentication(client: AsyncClient) -> None
     )
 
     assert response.status_code == 401
+
+
+async def test_upload_report_attachment(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    auth = await register(client, "route_attachment")
+
+    response = await client.post(
+        "/api/v1/chat/attachments",
+        headers=auth_headers(auth),
+        data={"kind": "report"},
+        files={"file": ("血糖报告.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["filename"] == "血糖报告.pdf"
+    assert body["kind"] == "report"
+    attachment = await db_session.get(MessageAttachment, UUID(body["id"]))
+    assert attachment is not None
+    assert attachment.kind == MessageAttachmentKind.REPORT
+    assert attachment.data == b"%PDF-1.4"
+
+    content = await client.get(
+        f"/api/v1/chat/attachments/{body['id']}/content",
+        headers=auth_headers(auth),
+    )
+    assert content.status_code == 200
+    assert content.headers["content-type"] == "application/pdf"
+    assert content.content == b"%PDF-1.4"
 
 
 async def test_send_message_rejects_content_over_limit(client: AsyncClient) -> None:
@@ -275,7 +308,6 @@ async def test_retry_failed_message_streams_a_new_answer_without_new_user_messag
     )
     assert [message["content"] for message in history.json()["messages"]] == [
         "有点担心",
-        "没有生成完",
         "我在这里。",
     ]
 

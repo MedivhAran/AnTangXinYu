@@ -33,6 +33,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiClient, ApiError, errorMessage } from '../api/client';
 import type {
+  ChatAttachment,
   ChatMessage,
   ChatStreamEvent,
   MessageHistory,
@@ -41,6 +42,7 @@ import type {
 import { ActivityStatus } from './ActivityStatus';
 import {
   AttachmentPreview,
+  MessageAttachmentCard,
   CameraScreen,
   type DraftAttachment,
   ReportPickerScreen,
@@ -104,6 +106,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   const [showMenu, setShowMenu] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [attachment, setAttachment] = useState<DraftAttachment | null>(null);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const streamController = useRef<AbortController | null>(null);
@@ -115,6 +118,10 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   const healthProfileCards = useHealthProfileCards(api);
   const healthConnect = useHealthConnect(user.id, api);
   const refreshHealthProfileCards = healthProfileCards.refresh;
+  const getAttachmentImageSource = useCallback(
+    (attachmentId: string) => api.getChatAttachmentImageSource(attachmentId),
+    [api],
+  );
   const conversationAnchors = useMemo<ConversationAnchor[]>(
     () =>
       state.messages
@@ -232,7 +239,10 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   useEffect(() => {
     if (lastMessage === undefined) return;
     if (!nearEnd.current && state.pendingRequestId === null) return;
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    const frame = requestAnimationFrame(() =>
+      listRef.current?.scrollToEnd({ animated: true }),
+    );
+    return () => cancelAnimationFrame(frame);
   }, [lastMessage, state.activity, state.pendingRequestId]);
 
   useEffect(() => {
@@ -252,7 +262,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
     return () => clearTimeout(timer);
   }, [state.messages, targetMessageId]);
 
-  const busy = state.sending || state.historyLoading;
+  const busy = state.sending || state.historyLoading || uploadingAttachment;
   async function loadOlder() {
     if (state.nextBefore === null || state.historyLoading) return;
     dispatch({ type: 'history-loading' });
@@ -312,30 +322,52 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   }
 
   async function sendContent(rawContent: string) {
-    const content = rawContent.trim();
-    if (attachment !== null) {
-      dispatch({
-        type: 'history-failed',
-        message: '附件已经选好，但服务器上传和报告分析还没有接通，暂时不能发送。',
-      });
-      return;
+    let content = rawContent.trim();
+    if (content.length === 0 && attachment === null) return;
+
+    const selectedAttachment = attachment;
+    let uploadedAttachment: ChatAttachment | null = null;
+    if (selectedAttachment !== null) {
+      setUploadingAttachment(true);
+      try {
+        uploadedAttachment = await api.uploadChatAttachment(selectedAttachment);
+        uploadedAttachment.localUri = selectedAttachment.uri;
+      } catch (error) {
+        dispatch({ type: 'history-failed', message: errorMessage(error) });
+        return;
+      } finally {
+        setUploadingAttachment(false);
+      }
+      if (content.length === 0) {
+        content =
+          selectedAttachment.kind === 'report'
+            ? '请帮我解读这份报告。'
+            : '请帮我看看这张照片。';
+      }
     }
-    if (content.length === 0) return;
 
     const clientMessageId = randomUUID();
     await runChatStream(
       clientMessageId,
       () => {
         setDraft('');
+        setAttachment(null);
         dispatch({
           type: 'send-started',
           clientMessageId,
           content,
+          attachment: uploadedAttachment,
           now: new Date().toISOString(),
         });
       },
       (onEvent, signal) =>
-        api.streamMessage(clientMessageId, content, onEvent, signal),
+        api.streamMessage(
+          clientMessageId,
+          content,
+          uploadedAttachment?.id ?? null,
+          onEvent,
+          signal,
+        ),
     );
   }
 
@@ -383,10 +415,17 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             type: 'send-started',
             clientMessageId,
             content: userMessage.content,
+            attachment: userMessage.attachments[0] ?? null,
             now: new Date().toISOString(),
           }),
         (onEvent, signal) =>
-          api.streamMessage(clientMessageId, userMessage.content, onEvent, signal),
+          api.streamMessage(
+            clientMessageId,
+            userMessage.content,
+            userMessage.attachments[0]?.id ?? null,
+            onEvent,
+            signal,
+          ),
       );
       return;
     }
@@ -398,6 +437,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         dispatch({
           type: 'retry-started',
           requestId,
+          failedAssistantMessageId,
           now: new Date().toISOString(),
         }),
       (onEvent, signal) =>
@@ -416,7 +456,8 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
       previousMessage === undefined ||
       localDay(previousMessage.createdAt) !== localDay(message.createdAt);
 
-    const showBubble = message.content.length > 0 || message.status !== 'generating';
+    const showBubble =
+      message.content.length > 0 || message.status !== 'generating';
     const activity =
       assistant && message.status === 'generating' ? state.activity : null;
 
@@ -444,6 +485,13 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
               message.id === targetMessageId ? styles.targetMessage : undefined,
             ]}
           >
+            {message.attachments.map((item) => (
+              <MessageAttachmentCard
+                attachment={item}
+                getImageSource={getAttachmentImageSource}
+                key={item.id}
+              />
+            ))}
             {showBubble ? (
               <View
                 style={[
@@ -656,11 +704,21 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
       />
 
       <SafeAreaView edges={['bottom']} style={styles.composerSafeArea}>
-        {!keyboardVisible && state.pendingRequestId === null ? (
-          <View style={styles.quickActions}>
+        {!keyboardVisible ? (
+          <View
+            accessibilityElementsHidden={state.pendingRequestId !== null}
+            importantForAccessibility={
+              state.pendingRequestId !== null ? 'no-hide-descendants' : 'auto'
+            }
+            style={[
+              styles.quickActions,
+              state.pendingRequestId !== null && styles.quickActionsHidden,
+            ]}
+          >
             <Pressable
               accessibilityLabel="报告解读"
               accessibilityRole="button"
+              disabled={busy}
               onPress={() => setShowReportPicker(true)}
               style={({ pressed }) => [
                 styles.quickAction,
@@ -673,6 +731,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             <Pressable
               accessibilityLabel="健康档案"
               accessibilityRole="button"
+              disabled={busy}
               onPress={() => setShowHealthOverview(true)}
               style={({ pressed }) => [
                 styles.quickAction,
@@ -685,6 +744,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             <Pressable
               accessibilityLabel="拍照"
               accessibilityRole="button"
+              disabled={busy}
               onPress={() => setShowCamera(true)}
               style={({ pressed }) => [
                 styles.quickAction,
@@ -724,7 +784,9 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             multiline
             onChangeText={setDraft}
             placeholder={
-              state.pendingRequestId !== null
+              uploadingAttachment
+                ? '正在上传附件…'
+                : state.pendingRequestId !== null
                 ? '正在回复…'
                 : state.historyLoading
                   ? '正在读取对话…'
@@ -742,7 +804,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             disabled={
               state.pendingRequestId === null &&
               (draft.trim().length === 0 && attachment === null ||
-                state.historyLoading)
+                state.historyLoading || uploadingAttachment)
             }
             onPress={
               state.pendingRequestId !== null
@@ -753,7 +815,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
               styles.sendButton,
               state.pendingRequestId === null &&
                 (draft.trim().length === 0 && attachment === null ||
-                  state.historyLoading) &&
+                  state.historyLoading || uploadingAttachment) &&
                 styles.sendButtonDisabled,
               pressed && styles.sendButtonPressed,
             ]}
@@ -834,6 +896,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           api={api}
           onClose={() => setShowHealthOverview(false)}
           onProfileChanged={() => void refreshHealthProfileCards()}
+          onSyncWearable={healthConnect.sync}
         />
       </Modal>
 
@@ -1045,7 +1108,7 @@ const styles = StyleSheet.create({
   userMessageRow: { justifyContent: 'flex-end' },
   assistantMessageRow: { justifyContent: 'flex-start' },
   messageContent: { maxWidth: '84%' },
-  userContent: { alignItems: 'flex-end' },
+  userContent: { alignItems: 'flex-end', gap: spacing.xs },
   targetMessage: {
     borderWidth: 2,
     borderColor: colors.primary,
@@ -1118,6 +1181,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingTop: spacing.xs,
   },
+  quickActionsHidden: { opacity: 0 },
   quickAction: {
     minHeight: 42,
     flex: 1,

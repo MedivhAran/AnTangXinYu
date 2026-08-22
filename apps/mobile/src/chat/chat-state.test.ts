@@ -13,6 +13,7 @@ function startedState() {
     type: 'send-started',
     clientMessageId: clientId,
     content: '我有点担心低血糖',
+    attachment: null,
     now: '2026-07-13T10:00:00.000Z',
   });
 }
@@ -118,6 +119,7 @@ describe('chatReducer', () => {
       status: 'completed',
       content: '旧内容',
       sources: [],
+      attachments: [],
       createdAt: '2026-07-13T09:00:00.000Z',
       completedAt: '2026-07-13T09:00:00.000Z',
     };
@@ -128,6 +130,7 @@ describe('chatReducer', () => {
       status: 'completed',
       content: '今天感觉怎么样？',
       sources: [],
+      attachments: [],
       createdAt: '2026-07-13T09:30:00.000Z',
       completedAt: '2026-07-13T09:30:01.000Z',
     };
@@ -140,6 +143,7 @@ describe('chatReducer', () => {
       type: 'send-started',
       clientMessageId: clientId,
       content: '好多了',
+      attachment: null,
       now: '2026-07-13T10:00:00.000Z',
     });
     state = chatReducer(state, {
@@ -169,7 +173,7 @@ describe('chatReducer', () => {
     expect(state.activity).toBeNull();
   });
 
-  test('a retry appends only a new assistant response', () => {
+  test('a retry replaces the failed assistant response after the server starts', () => {
     const originalMessages: ChatMessage[] = [
       {
         id: userId,
@@ -178,6 +182,7 @@ describe('chatReducer', () => {
         status: 'completed',
         content: '我有点担心低血糖',
         sources: [],
+      attachments: [],
         createdAt: '2026-07-13T10:00:00.000Z',
         completedAt: null,
       },
@@ -188,6 +193,7 @@ describe('chatReducer', () => {
         status: 'failed',
         content: '生成到一半',
         sources: [],
+      attachments: [],
         createdAt: '2026-07-13T10:00:01.000Z',
         completedAt: '2026-07-13T10:00:02.000Z',
       },
@@ -201,6 +207,7 @@ describe('chatReducer', () => {
     state = chatReducer(state, {
       type: 'retry-started',
       requestId: retryRequestId,
+      failedAssistantMessageId: assistantId,
       now: '2026-07-13T10:01:00.000Z',
     });
 
@@ -231,7 +238,8 @@ describe('chatReducer', () => {
     });
 
     expect(state.messages[0].id).toBe(userId);
-    expect(state.messages[2]).toMatchObject({
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[1]).toMatchObject({
       id: retryAssistantId,
       content: '这次回复完成了。',
       status: 'generating',
@@ -246,6 +254,7 @@ describe('chatReducer', () => {
       status: 'failed',
       content: '生成失败',
       sources: [],
+      attachments: [],
       createdAt: '2026-07-13T10:00:00.000Z',
       completedAt: '2026-07-13T10:00:01.000Z',
     };
@@ -257,6 +266,7 @@ describe('chatReducer', () => {
     state = chatReducer(state, {
       type: 'retry-started',
       requestId: retryRequestId,
+      failedAssistantMessageId: assistantId,
       now: '2026-07-13T10:01:00.000Z',
     });
 
@@ -282,6 +292,7 @@ describe('chatReducer', () => {
       status: 'failed',
       content: '生成失败',
       sources: [],
+      attachments: [],
       createdAt: '2026-07-13T10:00:00.000Z',
       completedAt: '2026-07-13T10:00:01.000Z',
     };
@@ -293,6 +304,7 @@ describe('chatReducer', () => {
     state = chatReducer(state, {
       type: 'retry-started',
       requestId: retryRequestId,
+      failedAssistantMessageId: assistantId,
       now: '2026-07-13T10:01:00.000Z',
     });
 
@@ -310,6 +322,7 @@ describe('chatReducer', () => {
       status: 'generating',
       content: '部分内容',
       sources: [],
+      attachments: [],
       createdAt: '2026-07-13T10:00:00.000Z',
       completedAt: null,
     };
@@ -366,6 +379,7 @@ describe('chatReducer', () => {
       type: 'send-started',
       clientMessageId: clientId,
       content: '我有点担心低血糖',
+      attachment: null,
       now: '2026-07-13T10:01:00.000Z',
     });
 

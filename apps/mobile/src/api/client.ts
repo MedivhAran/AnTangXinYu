@@ -2,11 +2,13 @@ import {
   fetch as expoFetch,
   type FetchRequestInit,
 } from 'expo/fetch';
+import { File } from 'expo-file-system';
 
 import type { TokenStore } from '../auth/token-store';
 import { consumeChatStream } from './ndjson';
 import {
   parseAuthResult,
+  parseAttachmentUpload,
   parseHealthProfile,
   parseHealthProfileCardDecision,
   parseHealthProfileChangeResult,
@@ -18,6 +20,7 @@ import {
   parseWearableImportResponse,
   readErrorPayload,
   type ChatStreamEvent,
+  type ChatAttachment,
   type HealthProfile,
   type HealthProfileCardAnswer,
   type HealthProfileCardDecision,
@@ -98,7 +101,9 @@ export class ApiClient {
   private jsonInit(init: FetchRequestInit = {}, accessToken?: string): FetchRequestInit {
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
-    if (init.body !== undefined) headers.set('Content-Type', 'application/json');
+    if (init.body !== undefined && !(init.body instanceof FormData)) {
+      headers.set('Content-Type', 'application/json');
+    }
     if (accessToken !== undefined) headers.set('Authorization', `Bearer ${accessToken}`);
     return { ...init, headers };
   }
@@ -339,6 +344,22 @@ export class ApiClient {
     return parseMessageHistory(await responseJson(response));
   }
 
+  async getChatAttachmentImageSource(attachmentId: string): Promise<{
+    uri: string;
+    headers: { Authorization: string };
+  }> {
+    const version = this.sessionVersion;
+    const tokens = await this.tokenStore.load();
+    this.assertSessionVersion(version);
+    if (tokens === null) return this.expireSession(version);
+    return {
+      uri: this.url(
+        `/api/v1/chat/attachments/${encodeURIComponent(attachmentId)}/content`,
+      ),
+      headers: { Authorization: `Bearer ${tokens.accessToken}` },
+    };
+  }
+
   async syncPushInstallation(
     installationId: string,
     expoPushToken: string | null,
@@ -535,6 +556,7 @@ export class ApiClient {
   async streamMessage(
     clientMessageId: string,
     content: string,
+    attachmentId: string | null,
     onEvent: (event: ChatStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -543,12 +565,38 @@ export class ApiClient {
       body: JSON.stringify({
         client_message_id: clientMessageId,
         content,
+        attachment_id: attachmentId,
       }),
       signal,
       headers: { Accept: 'application/x-ndjson' },
     });
 
     await this.consumeChatResponse(response, onEvent);
+  }
+
+  async uploadChatAttachment(attachment: {
+    kind: 'photo' | 'report';
+    mimeType: string;
+    name: string;
+    uri: string;
+  }): Promise<ChatAttachment> {
+    const form = new FormData();
+    const file = new File(attachment.uri);
+    form.append('kind', attachment.kind);
+    form.append(
+      'file',
+      {
+        bytes: () => file.bytes(),
+        name: attachment.name,
+        type: attachment.mimeType,
+      } as unknown as Blob,
+    );
+    const response = await this.authorizedFetch('/api/v1/chat/attachments', {
+      method: 'POST',
+      body: form,
+    });
+    if (!response.ok) throw await this.apiError(response);
+    return parseAttachmentUpload(await responseJson(response));
   }
 
   async retryMessage(

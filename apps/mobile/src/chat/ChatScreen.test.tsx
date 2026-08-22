@@ -66,6 +66,63 @@ jest.mock('../proactive-care/care-settings-modal', () => ({
 }));
 
 describe('ChatScreen', () => {
+  test('renders a photo attachment returned by chat history', async () => {
+    const imageSource = {
+      uri: 'https://api.test/api/v1/chat/attachments/photo-1/content',
+      headers: { Authorization: 'Bearer test-token' },
+    };
+    const api = {
+      getMessages: jest.fn().mockResolvedValue({
+        messages: [
+          {
+            id: '019b1111-1111-7111-8111-111111111111',
+            clientMessageId: '11111111-1111-4111-8111-111111111111',
+            role: 'user',
+            status: 'completed',
+            content: '请帮我看看这张照片。',
+            sources: [],
+            attachments: [
+              {
+                id: '019b2222-2222-7222-8222-222222222222',
+                kind: 'photo',
+                filename: 'report.jpg',
+                mimeType: 'image/jpeg',
+                sizeBytes: 128,
+              },
+            ],
+            createdAt: '2026-08-16T05:00:00.000Z',
+            completedAt: null,
+          },
+        ],
+        nextBefore: null,
+      }),
+      getChatAttachmentImageSource: jest.fn().mockResolvedValue(imageSource),
+    } as unknown as ApiClient;
+
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <ChatScreen
+          api={api}
+          onSignedOut={jest.fn()}
+          user={{ id: 'user-1', username: 'demo' }}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(api.getChatAttachmentImageSource).toHaveBeenCalledWith(
+      '019b2222-2222-7222-8222-222222222222',
+    );
+    expect(
+      tree!.root.findByProps({ accessibilityLabel: '上传的图片' }).props
+        .source,
+    ).toEqual(imageSource);
+    expect(tree!.root.findAllByProps({ children: 'report.jpg' })).toHaveLength(0);
+    act(() => tree!.unmount());
+  });
+
   test('disables pull-to-refresh while a reply stream is active', async () => {
     let finishStream!: () => void;
     let emitStreamEvent!: (event: {
@@ -85,6 +142,7 @@ describe('ChatScreen', () => {
         (
           _clientMessageId: string,
           _content: string,
+          _attachmentId: string | null,
           onEvent: typeof emitStreamEvent,
         ) => {
           emitStreamEvent = onEvent;
@@ -118,6 +176,10 @@ describe('ChatScreen', () => {
 
     expect(api.streamMessage).toHaveBeenCalledTimes(1);
     expect(tree!.root.findByType(FlatList).props.onRefresh).toBeUndefined();
+    expect(
+      tree!.root.findByProps({ accessibilityLabel: '报告解读' }).props
+        .disabled,
+    ).toBe(true);
 
     await act(async () => {
       emitStreamEvent({

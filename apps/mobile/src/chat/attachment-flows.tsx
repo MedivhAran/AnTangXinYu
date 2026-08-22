@@ -5,11 +5,13 @@ import {
   Cancel01Icon,
   Delete02Icon,
   FileChartLineIcon,
+  Image01Icon,
   Upload01Icon,
 } from '@hugeicons/core-free-icons';
 import { CameraView, type CameraType, useCameraPermissions } from 'expo-camera';
 import * as DocumentPicker from 'expo-document-picker';
-import { useRef, useState } from 'react';
+import * as ImagePicker from 'expo-image-picker';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -22,6 +24,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppIcon } from '../ui/icon';
 import { colors, radii, spacing, typefaces } from '../ui/theme';
+import type { ChatAttachment } from '../api/types';
 
 export type DraftAttachment = {
   kind: 'photo' | 'report';
@@ -42,7 +45,32 @@ export function CameraScreen({ onClose, onError, onUsePhoto }: CameraProps) {
   const [facing, setFacing] = useState<CameraType>('back');
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
   const [takingPhoto, setTakingPhoto] = useState(false);
+  const [pickingPhoto, setPickingPhoto] = useState(false);
   const cameraRef = useRef<CameraView>(null);
+
+  async function pickPhoto() {
+    if (pickingPhoto) return;
+    setPickingPhoto(true);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        quality: 0.9,
+      });
+      if (result.canceled) return;
+      const photo = result.assets[0];
+      onUsePhoto({
+        kind: 'photo',
+        mimeType: photo.mimeType ?? 'image/jpeg',
+        name: photo.fileName ?? `照片-${Date.now()}.jpg`,
+        size: photo.fileSize,
+        uri: photo.uri,
+      });
+    } catch {
+      onError('没有读取到这张照片，请重新选择。');
+    } finally {
+      setPickingPhoto(false);
+    }
+  }
 
   async function takePhoto() {
     if (cameraRef.current === null || takingPhoto) return;
@@ -87,12 +115,20 @@ export function CameraScreen({ onClose, onError, onUsePhoto }: CameraProps) {
           <Text style={cameraStyles.permissionButtonText}>继续</Text>
         </Pressable>
         <Pressable
+          accessibilityLabel="从相册选择"
+          accessibilityRole="button"
+          onPress={() => void pickPhoto()}
+          style={cameraStyles.secondaryButton}
+        >
+          <Text style={cameraStyles.secondaryButtonText}>从相册选择</Text>
+        </Pressable>
+        <Pressable
           accessibilityLabel="返回聊天"
           accessibilityRole="button"
           onPress={onClose}
           style={cameraStyles.secondaryButton}
         >
-          <Text style={cameraStyles.secondaryButtonText}>暂不拍照</Text>
+          <Text style={cameraStyles.secondaryButtonText}>暂不选择</Text>
         </Pressable>
       </SafeAreaView>
     );
@@ -167,6 +203,22 @@ export function CameraScreen({ onClose, onError, onUsePhoto }: CameraProps) {
       </SafeAreaView>
       <SafeAreaView edges={['bottom']} style={cameraStyles.shutterBar}>
         <Pressable
+          accessibilityLabel="从相册选择"
+          accessibilityRole="button"
+          disabled={pickingPhoto || takingPhoto}
+          onPress={() => void pickPhoto()}
+          style={({ pressed }) => [
+            cameraStyles.galleryButton,
+            pressed && cameraStyles.shutterPressed,
+          ]}
+        >
+          {pickingPhoto ? (
+            <ActivityIndicator color={colors.white} />
+          ) : (
+            <AppIcon color={colors.white} icon={Image01Icon} size={27} />
+          )}
+        </Pressable>
+        <Pressable
           accessibilityLabel="拍摄照片"
           accessibilityRole="button"
           disabled={takingPhoto}
@@ -182,6 +234,7 @@ export function CameraScreen({ onClose, onError, onUsePhoto }: CameraProps) {
             <View style={cameraStyles.shutterInner} />
           )}
         </Pressable>
+        <View style={cameraStyles.shutterPlaceholder} />
       </SafeAreaView>
     </View>
   );
@@ -265,7 +318,7 @@ export function ReportPickerScreen({ onClose, onError, onPicked }: ReportProps) 
           </Pressable>
         </View>
         <Text style={reportStyles.safetyText}>
-          报告内容属于健康信息。当前页面只负责选择文件，服务器上传和报告分析接通前不会产生虚假结果。
+          报告会作为健康信息保存，并交给 AI 读取和解读。请确认文件属于你本人或已获得授权。
         </Text>
       </View>
     </SafeAreaView>
@@ -292,7 +345,7 @@ export function AttachmentPreview({
         <Text numberOfLines={1} style={attachmentStyles.name}>
           {attachment.name}
         </Text>
-        <Text style={attachmentStyles.status}>已选择 · 尚未上传</Text>
+        <Text style={attachmentStyles.status}>已选择 · 等待发送</Text>
       </View>
       <Pressable
         accessibilityLabel="移除附件"
@@ -302,6 +355,79 @@ export function AttachmentPreview({
       >
         <AppIcon color={colors.muted} icon={Delete02Icon} size={20} />
       </Pressable>
+    </View>
+  );
+}
+
+export function MessageAttachmentCard({
+  attachment,
+  getImageSource,
+}: {
+  attachment: ChatAttachment;
+  getImageSource: (attachmentId: string) => Promise<{
+    uri: string;
+    headers: { Authorization: string };
+  }>;
+}) {
+  const isImage = attachment.mimeType.startsWith('image/');
+  const [remoteImageSource, setRemoteImageSource] = useState<{
+    uri: string;
+    headers: { Authorization: string };
+  } | null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    if (!isImage || attachment.localUri) return;
+    let active = true;
+    void getImageSource(attachment.id).then(
+      (source) => {
+        if (active) setRemoteImageSource(source);
+      },
+      () => {
+        if (active) setImageFailed(true);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [attachment.id, attachment.localUri, getImageSource, isImage]);
+
+  if (isImage) {
+    const imageSource = attachment.localUri
+      ? { uri: attachment.localUri }
+      : remoteImageSource;
+    return (
+      <View style={attachmentStyles.imageBubble}>
+        {imageSource !== null && !imageFailed ? (
+          <Image
+            accessibilityLabel="上传的图片"
+            onError={() => setImageFailed(true)}
+            resizeMode="cover"
+            source={imageSource}
+            style={attachmentStyles.messageImage}
+          />
+        ) : imageFailed ? (
+          <Text style={attachmentStyles.imageError}>图片加载失败</Text>
+        ) : (
+          <ActivityIndicator color={colors.primary} />
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <View style={attachmentStyles.card}>
+      <View style={attachmentStyles.fileIcon}>
+        <AppIcon color={colors.primary} icon={FileChartLineIcon} />
+      </View>
+      <View style={attachmentStyles.copy}>
+        <Text numberOfLines={1} style={attachmentStyles.name}>
+          {attachment.filename}
+        </Text>
+        <Text style={attachmentStyles.status}>
+          {attachment.mimeType === 'application/pdf' ? 'PDF 报告' : '图片'}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -396,11 +522,23 @@ const cameraStyles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
     paddingTop: spacing.xl,
     paddingBottom: spacing.lg,
     backgroundColor: 'rgba(5, 8, 7, 0.3)',
   },
+  galleryButton: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: 'rgba(17, 34, 31, 0.68)',
+  },
+  shutterPlaceholder: { width: 52, height: 52 },
   shutterOuter: {
     width: 78,
     height: 78,
@@ -571,6 +709,24 @@ const attachmentStyles = StyleSheet.create({
     backgroundColor: colors.paper,
   },
   image: { width: 48, height: 48, borderRadius: radii.sm },
+  imageBubble: {
+    width: 238,
+    height: 178,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: colors.paperMuted,
+    boxShadow: '0 6px 18px rgba(24, 58, 49, 0.12)',
+  },
+  messageImage: { width: '100%', height: '100%' },
+  imageError: {
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 12,
+  },
   fileIcon: {
     width: 48,
     height: 48,

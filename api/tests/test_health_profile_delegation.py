@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import (
 import antang_api.tools.wearable as wearable_tools
 from antang_api.agents.health_profile import (
     PROFILE_AGENT_NAME,
+    ProfileAgentDecision,
+    ProfileAgentProposal,
     ProfileAgentGraph,
     ProfileDecision,
     build_profile_agent,
@@ -115,7 +117,12 @@ class FakeHealthProfileGraph:
                     },
                 )
             ],
-            "structured_response": self.decision,
+            "structured_response": ProfileAgentDecision(
+                proposals=[
+                    ProfileAgentProposal.model_validate(proposal.model_dump())
+                    for proposal in self.decision.proposals
+                ]
+            ),
         }
 
 
@@ -765,7 +772,7 @@ async def test_child_wearable_tool_is_persisted_without_custom_activity(
                 content="",
                 tool_calls=[
                     {
-                        "name": "ProfileDecision",
+                        "name": "ProfileAgentDecision",
                         "args": {"proposals": []},
                         "id": "structured-result-1",
                         "type": "tool_call",

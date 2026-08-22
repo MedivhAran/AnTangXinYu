@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -41,6 +41,8 @@ from antang_api.models import (
     CarePlan,
     CarePlanStatus,
     Message,
+    MessageAttachment,
+    MessageAttachmentKind,
     MessageRole,
     MessageStatus,
     PersonalProfile,
@@ -378,6 +380,36 @@ async def test_prepare_chat_run_rejects_duplicate_and_active_run(
         )
 
 
+async def test_prepare_chat_run_binds_uploaded_attachment(
+    db_session: AsyncSession,
+) -> None:
+    user = await create_user(db_session, "attachment")
+    attachment = MessageAttachment(
+        user_id=user.id,
+        kind=MessageAttachmentKind.REPORT,
+        filename="血糖报告.pdf",
+        mime_type="application/pdf",
+        size_bytes=8,
+        data=b"%PDF-1.4",
+    )
+    db_session.add(attachment)
+    await db_session.commit()
+
+    prepared = await prepare_chat_run(
+        db_session,
+        user.id,
+        uuid4(),
+        "",
+        attachment.id,
+    )
+
+    await db_session.refresh(attachment)
+    message = await db_session.get(Message, prepared.user_message_id)
+    assert attachment.message_id == prepared.user_message_id
+    assert message is not None
+    assert message.content == "请帮我解读这份报告。"
+
+
 async def test_prepare_chat_retry_reuses_the_original_user_message(
     db_session: AsyncSession,
 ) -> None:
@@ -592,7 +624,7 @@ async def test_stream_chat_run_completes_and_persists_result(
         event
         async for event in stream_chat_run(
             session=db_session,
-            model=cast("ChatAnthropic", object()),
+            model=cast("BaseChatModel", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
             companion_memory=DISABLED_COMPANION_MEMORY,
@@ -664,7 +696,7 @@ async def test_stream_chat_run_never_forwards_internal_subagent_text(
         event
         async for event in stream_chat_run(
             session=db_session,
-            model=cast("ChatAnthropic", object()),
+            model=cast("BaseChatModel", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
             companion_memory=DISABLED_COMPANION_MEMORY,
@@ -697,7 +729,7 @@ async def test_stream_chat_run_fails_before_core_when_companion_memory_fails(
         event
         async for event in stream_chat_run(
             session=db_session,
-            model=cast("ChatAnthropic", object()),
+            model=cast("BaseChatModel", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
             companion_memory=cast(
@@ -786,7 +818,7 @@ async def test_stream_chat_run_validates_and_persists_cited_sources(
         event
         async for event in stream_chat_run(
             session=db_session,
-            model=cast("ChatAnthropic", object()),
+            model=cast("BaseChatModel", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
             companion_memory=DISABLED_COMPANION_MEMORY,
@@ -863,7 +895,7 @@ async def test_stream_chat_run_rejects_uncited_fetch_and_keeps_sources_empty(
         event
         async for event in stream_chat_run(
             session=db_session,
-            model=cast("ChatAnthropic", object()),
+            model=cast("BaseChatModel", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
             companion_memory=DISABLED_COMPANION_MEMORY,
@@ -918,7 +950,7 @@ async def test_stream_chat_run_streams_tool_preamble_and_activity(
         event
         async for event in stream_chat_run(
             session=db_session,
-            model=cast("ChatAnthropic", object()),
+            model=cast("BaseChatModel", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
             companion_memory=DISABLED_COMPANION_MEMORY,
@@ -1000,7 +1032,7 @@ async def test_stream_chat_run_marks_mismatched_output_failed_without_logging_er
             event
             async for event in stream_chat_run(
                 session=db_session,
-                model=cast("ChatAnthropic", object()),
+                model=cast("BaseChatModel", object()),
                 agent=cast("CoreAgentGraph", fake_agent),
                 tools=(),
                 companion_memory=DISABLED_COMPANION_MEMORY,
@@ -1068,7 +1100,7 @@ async def test_stream_chat_run_marks_client_cancellation(
             event
             async for event in stream_chat_run(
                 session=db_session,
-                model=cast("ChatAnthropic", object()),
+                model=cast("BaseChatModel", object()),
                 agent=cast("CoreAgentGraph", fake_agent),
                 tools=(),
                 companion_memory=DISABLED_COMPANION_MEMORY,
@@ -1113,7 +1145,7 @@ async def test_stream_chat_run_marks_closed_generator_cancelled(
         "AsyncGenerator[Any, None]",
         stream_chat_run(
             session=db_session,
-            model=cast("ChatAnthropic", object()),
+            model=cast("BaseChatModel", object()),
             agent=cast("CoreAgentGraph", fake_agent),
             tools=(),
             companion_memory=DISABLED_COMPANION_MEMORY,

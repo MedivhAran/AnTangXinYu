@@ -298,6 +298,11 @@ class WearableLatestResponse(BaseModel):
     source_package: str
 
 
+class HeartRateTrendPointResponse(BaseModel):
+    observed_at: datetime
+    beats_per_minute: PositiveInt
+
+
 class ProfileCardResponse(BaseModel):
     id: UUID
     kind: Literal[ProfileChangeMode.CONFIRMATION, ProfileChangeMode.CLARIFICATION]
@@ -451,3 +456,4 @@ class HealthProfileResponse(BaseModel):
     personal_profile: PersonalProfileSnapshot
     health_facts: list[HealthFactSnapshot]
     wearable_latest: list[WearableLatestResponse]
+    heart_rate_trend: list[HeartRateTrendPointResponse]

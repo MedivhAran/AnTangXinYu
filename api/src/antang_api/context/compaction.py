@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
@@ -17,6 +17,7 @@ from antang_api.models import (
     MessageRole,
     MessageStatus,
 )
+from antang_api.settings import settings
 
 SUMMARY_PROMPT_VERSION = "v2"
 
@@ -79,7 +80,7 @@ def select_messages_to_compact(
 
 async def compact_conversation(
     session: AsyncSession,
-    model: ChatAnthropic,
+    model: BaseChatModel,
     user_id: UUID,
     through_message_id: UUID,
     messages_to_keep: int,
@@ -173,7 +174,7 @@ async def compact_conversation(
         through_message_id=compacted_through_message_id,
         source_summary_id=source_summary_id,
         content=summary_content,
-        model=model.model,
+        model=settings.hachimi_model_name,
         prompt_version=SUMMARY_PROMPT_VERSION,
         input_tokens=usage["input_tokens"],
         output_tokens=usage["output_tokens"],

@@ -132,7 +132,7 @@ describe('notifications', () => {
     await expect(requestAndSync(api)).resolves.toBe('granted');
 
     expect(mockSetNotificationChannelAsync.mock.calls.map((call) => call[0])).toEqual([
-      'care-checkins-v1',
+      'care-checkins-v2',
       'health-care-v1',
     ]);
     expect(mockRequestPermissionsAsync).toHaveBeenCalledTimes(1);

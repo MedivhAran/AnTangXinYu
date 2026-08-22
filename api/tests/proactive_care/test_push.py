@@ -276,7 +276,8 @@ async def test_push_worker_sends_then_checks_the_same_ticket(
     assert len(client.sent) == 1
     payload = client.sent[0]
     assert payload["body"] == "今天感觉怎么样？"
-    assert payload["channelId"] == "care-checkins-v1"
+    assert payload["channelId"] == "care-checkins-v2"
+    assert payload["sound"] == "default"
     assert payload["collapseId"] == str(delivery_id)
     assert payload["tag"] == str(delivery_id)
     assert payload["data"] == {

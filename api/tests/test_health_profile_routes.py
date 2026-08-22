@@ -68,6 +68,7 @@ async def test_registration_creates_profile_and_authenticated_profile_api(
         assert body["personal_profile"]["revision"] == 0
         assert body["health_facts"] == []
         assert body["wearable_latest"] == []
+        assert body["heart_rate_trend"] == []
 
         user = await db_session.get(User, auth["user"]["id"])
         assert user is not None

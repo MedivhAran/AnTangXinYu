@@ -210,9 +210,8 @@ class ToolPersistenceMiddleware(
             _tool_rounds(request.messages, context.input_message_count)
         )
         if completed_rounds >= self._max_tool_rounds:
-            # DeepSeek Anthropic 明确支持 tool_choice={"type": "none"}。
-            # 保留工具定义是因为 LangChain 在 tools=[] 时不会发送 tool_choice。
-            return await handler(request.override(tool_choice={"type": "none"}))
+            # OpenAI 兼容协议用字符串 none 明确关闭最后一轮工具调用。
+            return await handler(request.override(tool_choice="none"))
         if completed_rounds == self._max_tool_rounds - 1:
             return await handler(
                 request.override(

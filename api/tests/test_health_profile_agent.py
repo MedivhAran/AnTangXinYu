@@ -36,8 +36,20 @@ async def test_health_profile_agent_returns_strict_structured_decision() -> None
                 content="",
                 tool_calls=[
                     {
-                        "name": "ProfileDecision",
-                        "args": {"proposals": []},
+                        "name": "ProfileAgentDecision",
+                        "args": {
+                            "proposals": [
+                                {
+                                    "target_type": "personal_profile",
+                                    "mode": "clarification",
+                                    "evidence_quote": "我体重100",
+                                    "clarification_reason": "missing_unit",
+                                    "field_name": "weight_kg",
+                                    "operation": "set",
+                                    "value": 100,
+                                }
+                            ]
+                        },
                         "id": "structured-decision",
                         "type": "tool_call",
                     }
@@ -54,7 +66,11 @@ async def test_health_profile_agent_returns_strict_structured_decision() -> None
     run_id = uuid4()
     user_id = uuid4()
     final_state = await agent.ainvoke(
-        {"messages": [HumanMessage(content='{"current_user_message":"你好"}')]},
+        {
+            "messages": [
+                HumanMessage(content='{"current_user_message":"我体重100"}')
+            ]
+        },
         config={"configurable": {"thread_id": str(run_id)}},
         context=AgentContext(
             user_id=user_id,
@@ -67,7 +83,12 @@ async def test_health_profile_agent_returns_strict_structured_decision() -> None
         cast(dict[str, Any], final_state)
     )
 
-    assert decision.proposals == []
+    assert len(decision.proposals) == 1
+    proposal = decision.proposals[0]
+    assert proposal.target_type.value == "personal_profile"
+    assert proposal.field_name.value == "weight_kg"
+    assert proposal.value == 100
+    assert proposal.unit is None
     assert input_tokens == 12
     assert output_tokens == 4
 

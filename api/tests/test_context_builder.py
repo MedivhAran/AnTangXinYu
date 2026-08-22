@@ -16,6 +16,8 @@ from antang_api.models import (
     AgentToolCallStatus,
     ConversationSummary,
     Message,
+    MessageAttachment,
+    MessageAttachmentKind,
     MessageRole,
     MessageStatus,
     User,
@@ -90,6 +92,50 @@ async def test_build_chat_context_without_summary(
         "当时发生了什么？",
         "我睡前一直反复测血糖。",
     ]
+
+
+async def test_build_chat_context_includes_pdf_for_the_model(
+    db_session: AsyncSession,
+) -> None:
+    username = f"pdf_context_{uuid4().hex[:12]}"
+    user = User(
+        username=username,
+        username_normalized=username,
+        password_hash="test-only-password-hash",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    current_message = Message(
+        user_id=user.id,
+        role=MessageRole.USER,
+        status=MessageStatus.COMPLETED,
+        content="请解读这份报告",
+    )
+    db_session.add(current_message)
+    await db_session.flush()
+    db_session.add(
+        MessageAttachment(
+            user_id=user.id,
+            message_id=current_message.id,
+            kind=MessageAttachmentKind.REPORT,
+            filename="报告.pdf",
+            mime_type="application/pdf",
+            size_bytes=8,
+            data=b"%PDF-1.4",
+        )
+    )
+    await db_session.flush()
+
+    context = await build_chat_context(db_session, user.id, current_message.id)
+
+    content = context.messages[-1].content
+    assert isinstance(content, list)
+    assert content[0]["type"] == "file"
+    assert content[0]["file"]["filename"] == "报告.pdf"
+    assert content[0]["file"]["file_data"].startswith(
+        "data:application/pdf;base64,"
+    )
+    assert content[1] == {"type": "text", "text": "请解读这份报告"}
 
 
 async def test_build_chat_context_keeps_proactive_opening_before_short_reply(

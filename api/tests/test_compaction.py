@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,7 +156,7 @@ async def test_compaction_snapshots_form_a_chain(
         return responses.pop(0)
 
     fake_model = cast(
-        "ChatAnthropic",
+        "BaseChatModel",
         SimpleNamespace(
             model="deepseek-v4-pro",
             ainvoke=AsyncMock(side_effect=invoke_without_open_transaction),
@@ -294,7 +294,7 @@ async def test_compaction_preserves_proactive_question_and_short_reply(
         )
 
     fake_model = cast(
-        "ChatAnthropic",
+        "BaseChatModel",
         SimpleNamespace(
             model="deepseek-v4-pro",
             ainvoke=AsyncMock(side_effect=inspect_prompt),

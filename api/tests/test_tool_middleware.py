@@ -216,7 +216,7 @@ def completed_tool_rounds(count: int) -> list[AnyMessage]:
     [
         (0, ["web_search", "web_fetch"], None),
         (9, ["web_fetch"], None),
-        (10, ["web_search", "web_fetch"], {"type": "none"}),
+        (10, ["web_search", "web_fetch"], "none"),
     ],
 )
 async def test_model_only_sees_tools_valid_for_remaining_rounds(

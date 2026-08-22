@@ -23,6 +23,15 @@ export type ChatSource = {
   url: string;
 };
 
+export type ChatAttachment = {
+  id: string;
+  kind: 'photo' | 'report';
+  filename: string;
+  mimeType: 'application/pdf' | 'image/jpeg' | 'image/png';
+  sizeBytes: number;
+  localUri?: string;
+};
+
 export type ChatMessage = {
   id: string;
   clientMessageId: string | null;
@@ -30,6 +39,7 @@ export type ChatMessage = {
   status: MessageStatus;
   content: string;
   sources: ChatSource[];
+  attachments: ChatAttachment[];
   createdAt: string;
   completedAt: string | null;
 };
@@ -260,6 +270,12 @@ export type HealthProfile = {
   personalProfile: PersonalProfile;
   healthFacts: HealthFact[];
   wearableLatest: WearableLatest[];
+  heartRateTrend: HeartRateTrendPoint[];
+};
+
+export type HeartRateTrendPoint = {
+  observedAt: string;
+  beatsPerMinute: number;
 };
 
 type WearableDevice = {
@@ -407,6 +423,29 @@ function integerValue(value: unknown, name: string): number {
     throw new Error(`${name} 必须是非负整数`);
   }
   return value as number;
+}
+
+function parseAttachment(value: unknown, name: string): ChatAttachment {
+  const data = objectValue(value, name);
+  const kind = stringValue(data.kind, `${name}.kind`);
+  const mimeType = stringValue(data.mime_type, `${name}.mime_type`);
+  if (kind !== 'photo' && kind !== 'report') {
+    throw new Error(`${name}.kind 无效`);
+  }
+  if (!['application/pdf', 'image/jpeg', 'image/png'].includes(mimeType)) {
+    throw new Error(`${name}.mime_type 无效`);
+  }
+  return {
+    id: uuidValue(data.id, `${name}.id`),
+    kind,
+    filename: stringValue(data.filename, `${name}.filename`),
+    mimeType: mimeType as ChatAttachment['mimeType'],
+    sizeBytes: integerValue(data.size_bytes, `${name}.size_bytes`),
+  };
+}
+
+export function parseAttachmentUpload(value: unknown): ChatAttachment {
+  return parseAttachment(value, 'attachment');
 }
 
 function booleanValue(value: unknown, name: string): boolean {
@@ -585,6 +624,11 @@ function parseMessage(value: unknown): ChatMessage {
     status: status as MessageStatus,
     content: data.content,
     sources: parseSources(data.sources, 'message.sources'),
+    attachments: Array.isArray(data.attachments)
+      ? data.attachments.map((attachment, index) =>
+          parseAttachment(attachment, `message.attachments[${index}]`),
+        )
+      : [],
     createdAt: dateValue(data.created_at, 'message.created_at'),
     completedAt:
       data.completed_at === null
@@ -980,6 +1024,9 @@ export function parseHealthProfile(value: unknown): HealthProfile {
   if (!Array.isArray(data.wearable_latest)) {
     throw new Error('health profile.wearable_latest 必须是数组');
   }
+  if (!Array.isArray(data.heart_rate_trend)) {
+    throw new Error('health profile.heart_rate_trend 必须是数组');
+  }
 
   const healthFacts = data.health_facts.map(parseHealthFact);
   const factIds = new Set<string>();
@@ -1001,10 +1048,25 @@ export function parseHealthProfile(value: unknown): HealthProfile {
     recordTypes.add(observation.recordType);
   }
 
+  const heartRateTrend = data.heart_rate_trend.map((value, index) => {
+    const point = objectValue(value, `health profile.heart_rate_trend[${index}]`);
+    return {
+      observedAt: zonedDateTimeValue(
+        point.observed_at,
+        `health profile.heart_rate_trend[${index}].observed_at`,
+      ),
+      beatsPerMinute: positiveIntegerValue(
+        point.beats_per_minute,
+        `health profile.heart_rate_trend[${index}].beats_per_minute`,
+      ),
+    };
+  });
+
   return {
     personalProfile: parsePersonalProfile(data.personal_profile),
     healthFacts,
     wearableLatest,
+    heartRateTrend,
   };
 }
 

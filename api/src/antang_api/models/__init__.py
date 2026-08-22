@@ -3,6 +3,8 @@ from antang_api.models.chat import (
     AgentRun,
     AgentRunStatus,
     Message,
+    MessageAttachment,
+    MessageAttachmentKind,
     MessageRole,
     MessageStatus,
 )
@@ -51,6 +53,8 @@ __all__ = [
     "AgentRunStatus",
     "LoginSession",
     "Message",
+    "MessageAttachment",
+    "MessageAttachmentKind",
     "MessageRole",
     "MessageStatus",
     "User",

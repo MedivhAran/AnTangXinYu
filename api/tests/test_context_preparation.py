@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from langchain_anthropic import ChatAnthropic
+from langchain.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from sqlalchemy import select
@@ -59,7 +59,7 @@ async def test_prepare_chat_context_releases_read_transaction_before_counting(
 
     result = await prepare_chat_context(
         db_session,
-        cast("ChatAnthropic", object()),
+        cast("BaseChatModel", object()),
         "系统提示词",
         uuid4(),
         uuid4(),
@@ -89,7 +89,7 @@ async def test_prepare_chat_context_returns_without_compaction(
 
     result = await prepare_chat_context(
         session,
-        cast("ChatAnthropic", object()),
+        cast("BaseChatModel", object()),
         "系统提示词",
         uuid4(),
         uuid4(),
@@ -123,7 +123,7 @@ async def test_prepare_chat_context_compacts_and_rebuilds_once(
 
     result = await prepare_chat_context(
         session,
-        cast("ChatAnthropic", object()),
+        cast("BaseChatModel", object()),
         "系统提示词",
         uuid4(),
         uuid4(),
@@ -160,7 +160,7 @@ async def test_prepare_chat_context_raises_when_rebuilt_context_is_too_large(
     with pytest.raises(ContextBudgetExceededError) as error_info:
         await prepare_chat_context(
             session,
-            cast("ChatAnthropic", object()),
+            cast("BaseChatModel", object()),
             "系统提示词",
             uuid4(),
             uuid4(),
@@ -228,7 +228,7 @@ async def test_prepare_chat_context_clears_old_tool_results_before_compaction(
 
     result = await prepare_chat_context(
         session,
-        cast("ChatAnthropic", object()),
+        cast("BaseChatModel", object()),
         "系统提示词",
         uuid4(),
         uuid4(),
@@ -280,7 +280,7 @@ async def test_prepare_chat_context_clears_rebuilt_context_again(
 
     result = await prepare_chat_context(
         session,
-        cast("ChatAnthropic", object()),
+        cast("BaseChatModel", object()),
         "系统提示词",
         uuid4(),
         uuid4(),
