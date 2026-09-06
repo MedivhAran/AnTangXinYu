@@ -24,7 +24,7 @@ Gitee Go 已开通，推送协作分支会自动触发 `check.yml`。在仓库�
 | 手机端 | Gitee 提供的 Node.js 24.13.0；安装锁定依赖、类型检查、Lint、测试、Android JS 打包 |
 | 后端 | Python 3.12、uv；Ruff、Pyright、临时 PostgreSQL、数据库迁移和测试 |
 
-Gitee 执行机没有 Docker，`scripts/check-api-gitee` 在本次临时 Ubuntu 容器内安装并启动 PostgreSQL 18。它把连接地址显式交给测试入口，测试结束后删除临时库和数据库实例。本地仍使用 Docker，两种环境共用 `api/scripts/test` 的建库、迁移、测试和清理流程。CI 安装 uv 使用阿里云 PyPI 镜像，项目依赖仍由 `api/uv.lock` 锁定。
+Gitee 执行机没有 Docker，`scripts/check-api-gitee` 在本次临时 Ubuntu 容器内安装并启动 PostgreSQL 18。它把连接地址显式交给测试入口，测试结束后删除临时库和数据库实例。本地仍使用 Docker，两种环境共用 `api/scripts/test` 的建库、迁移、测试和清理流程。CI 安装 uv 和 PostgreSQL 使用阿里云镜像，数据库软件包继续验证 PostgreSQL 官方签名，项目依赖由 `api/uv.lock` 锁定。
 
 自动检查流水线不配置模型、Expo 或部署密钥。也不要给整个仓库的所有流水线设置可见的 `EXPO_TOKEN`。
 
@@ -85,3 +85,4 @@ curl --fail https://106.15.194.0/health
 - [Expo 从 CI 触发构建](https://docs.expo.dev/build/building-on-ci/)
 - [Expo 内部安装包分发](https://docs.expo.dev/build/internal-distribution/)
 - [PostgreSQL 官方 Ubuntu 软件源](https://www.postgresql.org/download/linux/ubuntu/)
+- [阿里云 PostgreSQL 镜像](https://mirrors.aliyun.com/postgresql/repos/apt/dists/)

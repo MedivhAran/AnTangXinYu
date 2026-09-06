@@ -10,7 +10,7 @@ curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8
     -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
 cat > /etc/apt/sources.list.d/pgdg.sources <<EOF
 Types: deb
-URIs: https://apt.postgresql.org/pub/repos/apt
+URIs: https://mirrors.aliyun.com/postgresql/repos/apt
 Suites: ${VERSION_CODENAME}-pgdg
 Components: main
 Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
