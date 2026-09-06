@@ -19,7 +19,10 @@ check_mobile() {
 
 check_api() {
     cd "$project_dir"
-    uv sync --project api --frozen
+    # Gitee 已按锁文件版本与哈希从镜像安装依赖；复用后面的全部检查。
+    if [[ "${1:-}" != --no-sync ]]; then
+        uv sync --project api --frozen
+    fi
     api/.venv/bin/ruff check api
     (cd api && .venv/bin/pyright)
     bash scripts/test-api
@@ -27,7 +30,7 @@ check_api() {
 
 case "${1:-all}" in
     mobile) check_mobile ;;
-    api) check_api ;;
+    api) check_api "${2:-}" ;;
     all) check_mobile; check_api ;;
     *) echo '用法：bash scripts/check [mobile|api|all]' >&2; exit 2 ;;
 esac

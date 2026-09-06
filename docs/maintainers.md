@@ -24,7 +24,9 @@ Gitee Go 已开通，推送协作分支会自动触发 `check.yml`。在仓库�
 | 手机端 | Gitee 提供的 Node.js 24.13.0；安装锁定依赖、类型检查、Lint、测试、Android JS 打包 |
 | 后端 | Python 3.12、uv；Ruff、Pyright、临时 PostgreSQL、数据库迁移和测试 |
 
-Gitee 执行机没有 Docker，`scripts/check-api-gitee` 在本次临时 Ubuntu 容器内安装并启动 PostgreSQL 18。它把连接地址显式交给测试入口，测试结束后删除临时库和数据库实例。本地仍使用 Docker，两种环境共用 `api/scripts/test` 的建库、迁移、测试和清理流程。CI 安装 uv 和 PostgreSQL 使用阿里云镜像，数据库软件包继续验证 PostgreSQL 官方签名，项目依赖由 `api/uv.lock` 锁定。
+Gitee 执行机没有 Docker，`scripts/check-api-gitee` 在本次临时 Ubuntu 容器内安装并启动 PostgreSQL 18。它把连接地址显式交给测试入口，测试结束后删除临时库和数据库实例。本地仍使用 Docker，两种环境共用 `api/scripts/test` 的建库、迁移、测试和清理流程。
+
+CI 使用阿里云镜像下载工具和依赖。PostgreSQL 软件包验证官方签名；Python 依赖从 `api/uv.lock` 导出固定版本与哈希，并以 `--require-hashes` 校验安装，然后运行同一套检查。普通开发者继续使用 README 的一条命令即可。
 
 自动检查流水线不配置模型、Expo 或部署密钥。也不要给整个仓库的所有流水线设置可见的 `EXPO_TOKEN`。
 

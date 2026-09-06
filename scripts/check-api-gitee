@@ -25,4 +25,13 @@ trap 'pg_dropcluster --stop 18 antang_check' EXIT
 runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c \
     "CREATE ROLE antang_check WITH LOGIN SUPERUSER PASSWORD 'local-check-only'"
 export ANTANG_CHECK_DATABASE_URL=postgresql+psycopg://antang_check:local-check-only@127.0.0.1:5432/postgres
-bash scripts/check api
+
+# frozen sync 固定下载源；导出相同版本和哈希后，从国内镜像安装。
+uv export --project api --frozen --no-emit-project --format requirements-txt \
+    --output-file /tmp/antang-ci-requirements.txt --quiet
+uv venv api/.venv --python 3.12
+uv pip sync --python api/.venv/bin/python --require-hashes \
+    --index-url https://mirrors.aliyun.com/pypi/simple/ -r /tmp/antang-ci-requirements.txt
+uv pip install --python api/.venv/bin/python --no-deps \
+    --index-url https://mirrors.aliyun.com/pypi/simple/ --editable ./api
+bash scripts/check api --no-sync
