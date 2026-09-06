@@ -130,6 +130,7 @@ async def test_build_chat_context_includes_pdf_for_the_model(
 
     content = context.messages[-1].content
     assert isinstance(content, list)
+    assert isinstance(content[0], dict)
     assert content[0]["type"] == "file"
     assert content[0]["file"]["filename"] == "报告.pdf"
     assert content[0]["file"]["file_data"].startswith(

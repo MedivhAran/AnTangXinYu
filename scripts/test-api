@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$project_dir"
+
+# 每次检查单独建一套 PostgreSQL，端口由 Docker 分配。
+# 嵌套的 runner 测试继承相同 Compose 项目，各自再创建临时数据库。
+export COMPOSE_FILE="$project_dir/compose.check.yaml"
+export COMPOSE_PROJECT_NAME="antang-check-$(api/.venv/bin/python -c 'from uuid import uuid4; print(uuid4().hex[:12])')"
+export COMPOSE_ENV_FILES=/dev/null
+export COMPOSE_DISABLE_ENV_FILE=1
+
+cleanup() {
+    result=$?
+    trap - EXIT
+    if ! docker compose down --volumes --remove-orphans; then
+        result=1
+    fi
+    exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+docker compose up --detach --wait postgres
+database_address="$(docker compose port postgres 5432)"
+export DATABASE_URL="postgresql+psycopg://antang_check:local-check-only@127.0.0.1:${database_address##*:}/postgres"
+
+# 明确使用测试配置；不读取维护者的模型、搜索或推送凭据。
+export HACHIMI_API_KEY=local-test-only
+export HACHIMI_MODEL_NAME=gemini-3.7-flash
+export HACHIMI_BASE_URL=https://model.invalid/v1
+export TAVILY_API_KEY=local-test-only
+export JWT_SECRET=local-test-only-secret-at-least-32-characters
+export ACCESS_TOKEN_MINUTES=15
+export REFRESH_TOKEN_DAYS=30
+export HINDSIGHT_MODE=disabled
+export HINDSIGHT_API_KEY=
+export EXPO_PUSH_ACCESS_TOKEN=
+
+# 保留原测试入口的迁移、数据库删除和取消处理。
+bash api/scripts/test "$@"

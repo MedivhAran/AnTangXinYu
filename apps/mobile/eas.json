@@ -1,17 +1,23 @@
 {
   "cli": {
-    "version": ">= 20.5.1",
+    "version": "20.5.1",
     "appVersionSource": "remote"
   },
   "build": {
     "development": {
+      "node": "24.18.0",
+      "environment": "development",
       "developmentClient": true,
       "distribution": "internal"
     },
     "preview": {
+      "node": "24.18.0",
+      "environment": "preview",
       "distribution": "internal"
     },
     "production": {
+      "node": "24.18.0",
+      "environment": "production",
       "autoIncrement": true
     }
   },

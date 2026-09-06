@@ -48,7 +48,11 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "dev": "expo start --dev-client",
+    "check": "npm run typecheck && npm run lint && npm test -- --ci",
+    "build:development": "npx --yes eas-cli@20.5.1 build --platform android --profile development",
+    "build:preview": "npx --yes eas-cli@20.5.1 build --platform android --profile preview"
   },
   "jest": {
     "preset": "jest-expo",

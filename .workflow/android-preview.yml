@@ -1,0 +1,27 @@
+version: '1.0'
+name: antang-android-preview
+displayName: 生成 Android 测试包
+# 只由维护者手动触发；不要给外部 Fork 的自动检查注入 EXPO_TOKEN。
+triggers:
+  trigger: manual
+stages:
+  - name: build
+    displayName: 提交 EAS 云构建
+    trigger: auto
+    executor:
+      - gitee
+    steps:
+      - step: custom-build@custom
+        name: android-preview
+        displayName: Android 预览版
+        commands: |
+          set -Eeuo pipefail
+          source setup node 24
+          : "${EXPO_TOKEN:?请在此手动流水线配置 EXPO_TOKEN 密钥}"
+          cd apps/mobile
+          npm ci
+          cd ../..
+          bash scripts/build-android preview
+strategy:
+  retry: '0'
+  timeout: 15

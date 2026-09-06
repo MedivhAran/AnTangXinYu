@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$project_dir"
+profile="${1:-preview}"
+case "$profile" in
+    development|preview) ;;
+    *) echo '用法：bash scripts/build-android [development|preview]' >&2; exit 2 ;;
+esac
+
+# 安装包必须对应一个已提交的移动端版本，便于评审与回放。
+if [[ -n "$(git status --porcelain -- apps/mobile .easignore)" ]]; then
+    echo '请先提交移动端和 .easignore 的改动，再生成团队安装包。' >&2
+    exit 1
+fi
+commit="$(git rev-parse --short HEAD)"
+cd apps/mobile
+npx --yes eas-cli@20.5.1 build --platform android --profile "$profile" \
+    --non-interactive --no-wait --message "$profile / $commit"

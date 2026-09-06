@@ -12,6 +12,7 @@ from antang_api.agents.health_profile import (
     extract_decision,
 )
 from antang_api.agents.runtime import AgentContext
+from antang_api.health_profile.types import PersonalProfileProposal
 from antang_api.tools.health_profile import build_profile_tool
 
 
@@ -85,6 +86,7 @@ async def test_health_profile_agent_returns_strict_structured_decision() -> None
 
     assert len(decision.proposals) == 1
     proposal = decision.proposals[0]
+    assert isinstance(proposal, PersonalProfileProposal)
     assert proposal.target_type.value == "personal_profile"
     assert proposal.field_name.value == "weight_kg"
     assert proposal.value == 100

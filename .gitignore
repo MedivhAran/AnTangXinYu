@@ -34,6 +34,4 @@ artifacts/
 # IDE / tools
 .codex/
 
-docs/
-
 *.docx

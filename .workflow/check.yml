@@ -1,0 +1,42 @@
+version: '1.0'
+name: antang-check
+displayName: 安糖代码检查
+triggers:
+  trigger: auto
+  push:
+    branches:
+      include:
+        - '.*'
+  pr:
+    branches:
+      precise:
+        - main
+stages:
+  - name: check
+    displayName: 检查代码与数据库迁移
+    trigger: auto
+    strategy: naturally
+    executor:
+      - gitee
+    steps:
+      - step: custom-build@custom
+        name: mobile-check
+        displayName: 手机端检查与打包
+        commands: |
+          set -Eeuo pipefail
+          source setup node 24
+          bash scripts/check mobile
+      - step: custom-build@custom
+        name: api-check
+        displayName: 后端检查与隔离数据库测试
+        commands: |
+          set -Eeuo pipefail
+          source setup python 3.12
+          python -m pip install uv==0.11.19
+          docker info > /dev/null
+          docker compose version
+          bash scripts/check api
+strategy:
+  retry: '0'
+  timeout: 30
+  cloneDepth: 1

@@ -1,0 +1,22 @@
+# EAS 从仓库根目录打包；只上传移动端构建所需内容。
+/*
+!/apps
+/apps/*
+!/apps/mobile
+node_modules
+.env
+.env.*
+!.env.example
+.expo
+dist
+build
+coverage
+*.log
+*.apk
+*.aab
+*.jks
+*.keystore
+*.pem
+credentials.json
+/apps/mobile/android
+/apps/mobile/ios

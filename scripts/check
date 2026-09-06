@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$project_dir"
+
+check_mobile() {
+    cd "$project_dir/apps/mobile"
+    # 静态检查和单元测试不连接真实后端。
+    export EXPO_PUBLIC_API_URL=http://127.0.0.1:8000
+    export CI=1
+    npm ci
+    npm run typecheck
+    npm run lint
+    npm test -- --ci
+    # TypeScript 通过不代表 Metro 能打包；同时验证真实 Android JS bundle。
+    npx expo export --platform android --output-dir dist/check
+}
+
+check_api() {
+    cd "$project_dir"
+    uv sync --project api --frozen
+    api/.venv/bin/ruff check api
+    (cd api && .venv/bin/pyright)
+    bash scripts/test-api
+}
+
+case "${1:-all}" in
+    mobile) check_mobile ;;
+    api) check_api ;;
+    all) check_mobile; check_api ;;
+    *) echo '用法：bash scripts/check [mobile|api|all]' >&2; exit 2 ;;
+esac
