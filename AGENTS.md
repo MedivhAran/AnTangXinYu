@@ -131,7 +131,7 @@
 - Codex 桌面端保留当前任务和完整对话；所有项目命令通过 `wsl.exe -d Ubuntu -- bash -lc` 进入 Ubuntu 执行。
 - Python、`uv`、Alembic、Node.js、npm、Expo、Git 和 Docker 命令均在 Ubuntu 内运行。
 - 后端完整测试从项目根目录运行 `./api/scripts/test`；它使用迁移到最新版本的临时 PostgreSQL 数据库并在结束后删除，禁止让全量 `pytest` 直接连接开发数据库。
-- 协作检查入口为 `bash scripts/check mobile|api|all`。后端入口通过 `scripts/test-api` 启动独立的临时 PostgreSQL，再调用 `api/scripts/test`，无需开发数据库或真实模型凭据；CI 使用同一入口。
+- 协作检查入口为 `bash scripts/check mobile|api|all`。本地通过 `scripts/test-api` 启动临时 PostgreSQL 容器；Gitee 通过 `scripts/check-api-gitee` 在临时执行机内启动 PostgreSQL，并按锁文件版本和哈希安装依赖。两者共用检查与 `api/scripts/test` 的临时建库流程，无需开发数据库或真实模型凭据。
 - README 负责新人入口，`docs/development.md` 负责开发步骤，`docs/maintainers.md` 负责账号、流水线、出包与部署。`docs/` 纳入版本管理。Gitee 自动检查不携带业务或构建密钥，EAS 出包由维护者在可信提交上触发。
 - Windows 负责承载 Codex 界面和调用 `wsl.exe`，不得直接运行项目虚拟环境或 `node_modules` 中的程序。
 - 文件链接和工具工作区可以使用 `\\wsl.localhost\Ubuntu\home\medivh\AnTang`，代码与脚本中的项目路径使用 Linux 路径。

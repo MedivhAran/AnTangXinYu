@@ -4,8 +4,8 @@ set -Eeuo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 
-# 每次检查单独建一套 PostgreSQL，端口由 Docker 分配。
-# 嵌套的 runner 测试继承相同 Compose 项目，各自再创建临时数据库。
+# 本地每次检查单独建一套 PostgreSQL，端口由 Docker 分配。
+# 嵌套的 runner 测试继承数据库连接，各自再创建临时数据库。
 export COMPOSE_FILE="$project_dir/compose.check.yaml"
 export COMPOSE_PROJECT_NAME="antang-check-$(api/.venv/bin/python -c 'from uuid import uuid4; print(uuid4().hex[:12])')"
 export COMPOSE_ENV_FILES=/dev/null
