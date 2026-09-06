@@ -15,9 +15,10 @@ stages:
         name: android-preview
         displayName: Android 预览版
         commands: |
-          set -Eeuo pipefail
-          source setup node 24
+          set -eo pipefail
+          source setup node
           : "${EXPO_TOKEN:?请在此手动流水线配置 EXPO_TOKEN 密钥}"
+          cd "$WORKSPACE"
           cd apps/mobile
           npm ci
           cd ../..
