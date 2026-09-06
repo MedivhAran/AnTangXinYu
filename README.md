@@ -43,11 +43,13 @@ PR 写清楚“解决什么问题、怎么验证、有没有迁移或配置变�
 
 ## 安装包与维护
 
-- **开发包**：开发者安装，连接自己电脑上的开发服务。
-- **预览包**：给评审和测试人员安装，不需要电脑持续运行前端服务；仍需连接后端。
+- **[开发包](https://expo.dev/accounts/wocky528/projects/antang/builds/788bdfc9-4753-48d4-b28f-62283a337922)**：开发者安装，连接自己电脑上的开发服务。
+- **[预览包](https://expo.dev/accounts/wocky528/projects/antang/builds/39f4f7a0-f716-4af1-a9e6-c43fc8a3fc27)**：给评审和测试人员安装，不需要电脑持续运行前端服务；仍需连接后端。
 - 安装包在 [Expo 项目构建页](https://expo.dev/accounts/wocky528/projects/antang/builds) 获取，部分操作需要项目成员权限。
 
-[维护说明](docs/maintainers.md) 包含 Gitee 流水线、云构建、测试环境和当前待接通事项。
+以上两包于 2026-09-06 编译成功，对应提交 `69bbf61`。后续原生改动需要新包，安装前核对构建页的提交编号。
+
+[维护说明](docs/maintainers.md) 包含 Gitee 流水线、云构建和测试环境。
 
 ## 目录
 
@@ -56,6 +58,6 @@ PR 写清楚“解决什么问题、怎么验证、有没有迁移或配置变�
 | `apps/mobile/` | Android App 与移动端测试 |
 | `api/` | 后端、数据库迁移与后端测试 |
 | `scripts/` | 团队共用的检查和出包入口 |
-| `.workflow/` | Gitee 自动检查、手动出包配置 |
+| `.workflow/` | Gitee 自动检查配置 |
 | `docs/` | 开发与维护说明 |
 | `AGENTS.md` | 已确认的产品范围和项目约定 |

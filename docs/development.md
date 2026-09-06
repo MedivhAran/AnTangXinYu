@@ -10,7 +10,7 @@ Windows 使用 WSL Ubuntu。以下命令都在 Ubuntu 终端运行；先确认 `
 
 完成 README 的安装步骤后，从最新 `main` 新建自己的分支。分支名描述这次工作，例如 `feature/wearable-import`。
 
-示例配置已填好当前联调 API 地址。向维护者取得**当前开发 APK**，安装后在 `apps/mobile` 执行：
+示例配置已填好当前联调 API 地址。从 [README 的开发包链接](../README.md#安装包与维护) 安装 APK；后续原生代码有变化时向维护者取得新包。安装后在 `apps/mobile` 执行：
 
 ```bash
 npm run dev

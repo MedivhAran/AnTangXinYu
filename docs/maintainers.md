@@ -8,33 +8,31 @@
 | 开发包与预览包 | [Expo 构建页](https://expo.dev/accounts/wocky528/projects/antang/builds) |
 | App 当前 API 入口 | `https://106.15.194.0`，2026-09-06 健康检查正常 |
 | 实际 Docker 服务 | 目前在维护者电脑运行；公网转发链路未在本次配置中更改 |
-| 自动检查 | `.workflow/check.yml`；本地验证结果见下方验收记录 |
-| 手动出包 | `.workflow/android-preview.yml`，或 `bash scripts/build-android preview` |
+| 自动检查 | Gitee `.workflow/check.yml`，推送自动触发已验证 |
+| 手动出包 | `bash scripts/build-android development` 或 `preview` |
 
 公网地址可访问，不等于已有一套全天在线、数据独立的测试服务器。当前入口沿用现有后端，团队成员使用自己的测试账号；CI 始终使用临时数据库。维护者电脑和转发链路停机时，联调入口可能不可用。
 
-## 开通 Gitee 自动检查
+## Gitee 自动检查
 
-仓库管理员打开“流水线”，开通 Gitee Go，并导入本仓库 `.workflow/check.yml`。配置按 Gitee 官方 API 返回的流水线示例和 `custom-build@custom` 插件字段编写。需要由命令行代为配置时，先在 Ubuntu 执行 `npx --yes @gitee/gitee-cli@0.3.0 auth login`；令牌只填在本机终端，不发送到聊天或提交到仓库。
+Gitee Go 已开通，推送协作分支会自动触发 `check.yml`。在仓库“流水线”页面选择对应分支，即可查看“安糖代码检查”。
 
 自动检查包含两项：
 
 | 任务 | 执行内容 |
 | --- | --- |
-| 手机端 | Node.js 24；安装锁定依赖、类型检查、Lint、测试、Android JS 打包 |
+| 手机端 | Gitee 提供的 Node.js 24.13.0；安装锁定依赖、类型检查、Lint、测试、Android JS 打包 |
 | 后端 | Python 3.12、uv；Ruff、Pyright、临时 PostgreSQL、数据库迁移和测试 |
 
-先手动执行一次，再确认 Push 和目标为 `main` 的 PR 更新会触发。执行环境必须支持 Node 24、Python 3.12、Docker 和 Compose；配置会在缺少 Docker 时明确失败，不会跳过数据库测试。Gitee 账号权限、额度及实际执行机能力需要在首次云端运行中确认。
-
-如果当前云执行机不提供 Docker，需要为这项任务配置一台**独立的检查执行机**。不要把维护者正在运行业务数据库的电脑作为执行外部 PR 的宿主机。
+Gitee 执行机没有 Docker，`scripts/check-api-gitee` 在本次临时 Ubuntu 容器内安装并启动 PostgreSQL 18。它把连接地址显式交给测试入口，测试结束后删除临时库和数据库实例。本地仍使用 Docker，两种环境共用 `api/scripts/test` 的建库、迁移、测试和清理流程。CI 安装 uv 使用阿里云 PyPI 镜像，项目依赖仍由 `api/uv.lock` 锁定。
 
 自动检查流水线不配置模型、Expo 或部署密钥。也不要给整个仓库的所有流水线设置可见的 `EXPO_TOKEN`。
 
-## 配置合并规则
+## 合并规则
 
-把 `main` 设为保护分支，限制直接推送，合并由维护者负责。开启当前套餐支持的评审、测试通过要求，并用一个故意检查失败的 PR 验证是否确实阻止合并。
+`main` 已设为保护分支，API 回读确认 `protected: true`。仓库已有“至少 1 人审查、1 人测试”的配置，负责人均为 `medivharan`，本次保留。
 
-分支保护不自动等于“CI 必须通过”。如果当前套餐不能把流水线结果设为强制门槛，维护者必须核对**当前提交**的检查结果，不能把旧提交的绿色结果当作已通过。
+默认保护规则仍允许管理员推送与合并。团队约定统一走 PR，由维护者核对**当前提交**的检查和真机结果。当前尚未配置或验证“CI 失败禁止合并”的强制门槛；等云检查可运行后，再按套餐能力启用，并用检查失败的 PR 验证。
 
 ## 给团队生成安装包
 
@@ -51,7 +49,7 @@ bash scripts/build-android preview
 
 按需要选择其中一条。脚本提交云构建后会返回链接；此时只是进入队列，必须等 Expo 页面显示 **Finished** 才能分发。构建消息包含提交编号，评审时核对它。
 
-Gitee 手动出包使用 `.workflow/android-preview.yml`。只允许维护者运行，在**这条手动流水线**中配置 `EXPO_TOKEN` 密钥，选择已审查的分支执行。它仅提交 EAS 任务，后续构建结果在 Expo 查看。不要自动为外部 Fork PR 执行带凭据的出包流程。
+出包由有权限的成员使用自己的 Expo 登录执行上述命令，再把生成的安装链接放进 PR。Gitee 自动检查无需 Expo 登录或签名凭据。
 
 首次云构建如缺少签名配置，由维护者交互执行 `npm run build:preview` 完成初始化。`.easignore` 会排除本地 `.env`、后端和原生生成目录；Android 包使用 Expo 管理的签名配置。
 
@@ -71,16 +69,19 @@ curl --fail https://106.15.194.0/health
 
 仓库配置文件存在，不代表远端功能已经启用。交付时逐项记录实际结果：
 
-- 本地手机端检查与 Android JS 打包：通过，23 组 / 148 个测试。
-- 本地后端迁移、测试与临时数据库清理：通过，290 个测试，临时容器和网络已清理。
-- EAS 开发、预览环境：已确认均配置了当前 API 地址；上传归档已检查，只包含移动端与非秘密示例配置。新安装包等待本次构建结果。
-- Gitee 流水线开通与云端执行：管理 API 返回未登录，尚未验证。
-- `main` 分支保护：API 确认当前未开启，需要管理员启用并验证合并门槛。
+- 手机端检查与 Android JS 打包：通过，23 组 / 148 个测试；另用不含本地配置、依赖的干净源码副本完整跑通。
+- 后端迁移、测试与临时数据库清理：通过，290 个测试；干净源码副本也已跑通，临时容器和网络已清理。
+- EAS 开发、预览环境：已确认均配置当前 API 地址；上传归档只包含移动端与非秘密示例配置。
+- [开发 APK](https://expo.dev/accounts/wocky528/projects/antang/builds/788bdfc9-4753-48d4-b28f-62283a337922) 与 [预览 APK](https://expo.dev/accounts/wocky528/projects/antang/builds/39f4f7a0-f716-4af1-a9e6-c43fc8a3fc27)：均为 `FINISHED`，对应提交 `69bbf61`，可在构建页下载安装。
+- Gitee 云端执行：已开通并验证推送自动触发；每个提交的两个检查任务都通过后，再进入合并评审。最新结果在仓库“流水线”页面查看。
+- `main` 分支保护：已开启并回读确认；自动检查的强制合并门槛尚未验证。
 - 真机安装、手环同步与通知体验：由团队成员在对应手机上验收。
 
 ## 官方参考
 
 - [Gitee 流水线](https://help.gitee.com/enterprise/pipeline)
 - [Gitee 保护分支](https://help.gitee.com/enterprise/repo/设置保护分支)
+- [Gitee 默认保护规则与自定义权限](https://blog.gitee.com/2020/02/27/protected-branches/)
 - [Expo 从 CI 触发构建](https://docs.expo.dev/build/building-on-ci/)
 - [Expo 内部安装包分发](https://docs.expo.dev/build/internal-distribution/)
+- [PostgreSQL 官方 Ubuntu 软件源](https://www.postgresql.org/download/linux/ubuntu/)
