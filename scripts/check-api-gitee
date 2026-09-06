@@ -15,8 +15,9 @@ Suites: ${VERSION_CODENAME}-pgdg
 Components: main
 Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
 EOF
-echo 'create_main_cluster = false' > /etc/postgresql-common/createcluster.conf
 apt-get update -qq
+apt-get install -y --no-install-recommends postgresql-common
+echo 'create_main_cluster = false' > /etc/postgresql-common/createcluster.conf
 apt-get install -y --no-install-recommends postgresql-18
 
 pg_createcluster 18 antang_check --start -- --auth-host=scram-sha-256 --auth-local=peer

@@ -34,7 +34,8 @@ stages:
           source setup python 3.12
           source setup node 24.13.0
           unset PYTHONPATH
-          python -m pip install uv==0.11.19
+          python -m pip install --prefix /tmp/antang-ci-tools --index-url https://mirrors.aliyun.com/pypi/simple/ uv==0.11.19
+          export PATH="/tmp/antang-ci-tools/bin:$PATH"
           CI=1 bash scripts/check-api-gitee
 strategy:
   retry: '0'
