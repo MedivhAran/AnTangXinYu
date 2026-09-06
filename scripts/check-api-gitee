@@ -31,7 +31,7 @@ uv export --project api --frozen --no-emit-project --format requirements-txt \
     --output-file /tmp/antang-ci-requirements.txt --quiet
 uv venv api/.venv --python 3.12
 uv pip sync --python api/.venv/bin/python --require-hashes \
-    --index-url https://mirrors.aliyun.com/pypi/simple/ -r /tmp/antang-ci-requirements.txt
+    --index-url https://mirrors.aliyun.com/pypi/simple/ /tmp/antang-ci-requirements.txt
 uv pip install --python api/.venv/bin/python --no-deps \
     --index-url https://mirrors.aliyun.com/pypi/simple/ --editable ./api
 bash scripts/check api --no-sync
