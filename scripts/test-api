@@ -23,9 +23,15 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-docker compose up --detach --wait postgres
-database_address="$(docker compose port postgres 5432)"
-export DATABASE_URL="postgresql+psycopg://antang_check:local-check-only@127.0.0.1:${database_address##*:}/postgres"
+if [[ -n "${ANTANG_CHECK_DATABASE_URL:-}" ]]; then
+    # CI 显式传入本次检查专用的服务器；临时库仍由 api/scripts/test 创建和清理。
+    trap - EXIT INT TERM
+    export DATABASE_URL="$ANTANG_CHECK_DATABASE_URL"
+else
+    docker compose up --detach --wait postgres
+    database_address="$(docker compose port postgres 5432)"
+    export DATABASE_URL="postgresql+psycopg://antang_check:local-check-only@127.0.0.1:${database_address##*:}/postgres"
+fi
 
 # 明确使用测试配置；不读取维护者的模型、搜索或推送凭据。
 export HACHIMI_API_KEY=local-test-only
@@ -40,4 +46,7 @@ export HINDSIGHT_API_KEY=
 export EXPO_PUSH_ACCESS_TOKEN=
 
 # 保留原测试入口的迁移、数据库删除和取消处理。
+if [[ -n "${ANTANG_CHECK_DATABASE_URL:-}" ]]; then
+    exec bash api/scripts/test "$@"
+fi
 bash api/scripts/test "$@"

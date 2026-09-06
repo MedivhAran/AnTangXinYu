@@ -11,15 +11,36 @@ child_pid=0
 # Windows 进程可能把宿主机 TMP 传入 WSL；pytest 的临时文件固定留在 WSL。
 export TMPDIR=/tmp
 
+# 通过 PostgreSQL 连接管理临时库，兼容本地 Docker 与 CI 的独立数据库进程。
+database_command() (
+    cd "$api_dir"
+    "$python" - "$1" "$database_name" <<'PY'
+import sys
+
+import psycopg
+from psycopg import sql
+from sqlalchemy.engine import make_url
+
+from antang_api.settings import settings
+
+admin_url = make_url(settings.database_url).set(
+    drivername="postgresql", database="postgres"
+).render_as_string(hide_password=False)
+statements = {
+    "create": "CREATE DATABASE {}",
+    "drop": "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+}
+with psycopg.connect(admin_url, autocommit=True) as connection:
+    connection.execute(sql.SQL(statements[sys.argv[1]]).format(sql.Identifier(sys.argv[2])))
+PY
+)
+
 cleanup() {
     status=$?
     trap - EXIT
 
     if (( database_created )); then
-        if docker compose exec -T \
-            -e "ANTANG_TEST_DATABASE=$database_name" \
-            postgres sh -c \
-            'dropdb --if-exists --force --username "$POSTGRES_USER" "$ANTANG_TEST_DATABASE"'
+        if database_command drop
         then
             echo "Removed temporary test database: $database_name"
         else
@@ -49,10 +70,7 @@ trap 'forward_signal INT 130' INT
 trap 'forward_signal TERM 143' TERM
 
 cd "$project_dir"
-docker compose exec -T \
-    -e "ANTANG_TEST_DATABASE=$database_name" \
-    postgres sh -c \
-    'createdb --username "$POSTGRES_USER" "$ANTANG_TEST_DATABASE"'
+database_command create
 database_created=1
 
 test_database_url="$(

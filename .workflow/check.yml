@@ -24,10 +24,7 @@ stages:
         displayName: 手机端检查与打包
         commands: |
           set -eo pipefail
-          setup list
-          source setup node
-          node --version
-          cd "$WORKSPACE"
+          source setup node 24.13.0
           bash scripts/check mobile
       - step: custom-build@custom
         name: api-check
@@ -35,11 +32,10 @@ stages:
         commands: |
           set -eo pipefail
           source setup python 3.12
-          docker info > /dev/null
-          docker compose version
+          source setup node 24.13.0
+          unset PYTHONPATH
           python -m pip install uv==0.11.19
-          cd "$WORKSPACE"
-          bash scripts/check api
+          CI=1 bash scripts/check-api-gitee
 strategy:
   retry: '0'
   timeout: 30
