@@ -8,6 +8,7 @@ import type { User } from './src/api/types';
 import { AuthScreen } from './src/auth/AuthScreen';
 import { secureTokenStore } from './src/auth/token-store';
 import { ChatScreen } from './src/chat/ChatScreen';
+import { IS_DEMO_MODE } from './src/config';
 import { BrandMark } from './src/ui/brand-mark';
 import { colors, radii, spacing, typefaces } from './src/ui/theme';
 
@@ -16,6 +17,12 @@ type AppState =
   | { kind: 'signed-out'; message?: string }
   | { kind: 'signed-in'; user: User }
   | { kind: 'startup-error'; message: string };
+
+// 演示模式使用的虚拟用户（不连接后端）
+const DEMO_USER = {
+  id: 'demo-user',
+  username: '演示用户',
+} as User;
 
 export default function App() {
   return (
@@ -26,7 +33,10 @@ export default function App() {
 }
 
 function AppRoot() {
-  const [state, setState] = useState<AppState>({ kind: 'loading' });
+  // 演示模式直接进入聊天页；正常模式先显示加载
+  const [state, setState] = useState<AppState>(
+    IS_DEMO_MODE ? { kind: 'signed-in', user: DEMO_USER } : { kind: 'loading' },
+  );
   const [startupAttempt, setStartupAttempt] = useState(0);
   const api = appClient;
 
@@ -39,6 +49,9 @@ function AppRoot() {
   );
 
   useEffect(() => {
+    // 演示模式：不走网络恢复流程
+    if (IS_DEMO_MODE) return;
+
     let active = true;
 
     async function restoreSession() {

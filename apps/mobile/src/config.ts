@@ -1,11 +1,13 @@
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
 
-if (!configuredApiUrl) {
-  throw new Error('缺少 EXPO_PUBLIC_API_URL，请在 apps/mobile/.env 中配置后端地址。');
-}
+// 检查是否配置了有效的后端地址
+const hasValidApiUrl =
+  configuredApiUrl !== undefined && /^https?:\/\//i.test(configuredApiUrl);
 
-if (!/^https?:\/\//i.test(configuredApiUrl)) {
-  throw new Error('EXPO_PUBLIC_API_URL 必须是完整的 http:// 或 https:// 地址。');
-}
+// 没有配置时用本地占位符，避免 App 启动崩溃
+const effectiveUrl = hasValidApiUrl ? configuredApiUrl! : 'http://127.0.0.1:1';
 
-export const API_URL = configuredApiUrl.replace(/\/+$/, '');
+export const API_URL = effectiveUrl.replace(/\/+$/, '');
+
+// 演示模式：未配置真实后端时启用，App 直接跳过登录进入聊天页
+export const IS_DEMO_MODE = !hasValidApiUrl;
