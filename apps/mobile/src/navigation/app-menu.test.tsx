@@ -27,6 +27,15 @@ describe('AppMenu', () => {
           onSelectConversation={onSelectConversation}
           username="demo-user"
           visible
+          // ===== 新增：Gadgetbridge props（测试占位） =====
+          gadgetbridgeChecking={false}
+          gadgetbridgeConnected={false}
+          gadgetbridgeSyncing={false}
+          gadgetbridgeError={null}
+          gadgetbridgeProgress={null}
+          gadgetbridgeLastSyncedAt={null}
+          onGadgetbridgeConnect={() => { }}
+          onGadgetbridgeSync={() => { }}
         />,
       );
     });

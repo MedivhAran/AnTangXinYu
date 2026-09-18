@@ -2,7 +2,7 @@
   "expo": {
     "name": "安糖心语",
     "slug": "antang",
-    "owner": "wocky528",
+    "owner": "ayagoz1",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -25,7 +25,8 @@
         "android.permission.health.READ_HEART_RATE",
         "android.permission.health.READ_SLEEP",
         "android.permission.health.READ_OXYGEN_SATURATION",
-        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
+        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+        "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#F5F9F8",
@@ -36,11 +37,6 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "d04128ba-7ddd-4df4-a952-d52a8a9bea68"
-      }
     },
     "plugins": [
       "expo-secure-store",
@@ -87,6 +83,11 @@
         }
       ],
       "expo-status-bar"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "00534b36-3ddd-47ab-8a74-ae247356600d"
+      }
+    }
   }
 }

@@ -52,6 +52,7 @@ import { MessageSources } from './MessageSources';
 import { HealthProfileCards } from '../health-profile/health-profile-cards';
 import { useHealthProfileCards } from '../health-profile/use-health-profile-cards';
 import { useHealthConnect } from '../health-connect/use-health-connect';
+import { useGadgetbridge } from '../health-connect/useGadgetbridge';
 import { HealthOverviewScreen } from '../health-overview';
 import { AppMenu, type ConversationAnchor } from '../navigation/app-menu';
 import { useNotifications } from '../notifications/use-notifications';
@@ -117,6 +118,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   );
   const healthProfileCards = useHealthProfileCards(api);
   const healthConnect = useHealthConnect(user.id, api);
+  const gadgetbridge = useGadgetbridge(user.id);
   const refreshHealthProfileCards = healthProfileCards.refresh;
   const getAttachmentImageSource = useCallback(
     (attachmentId: string) => api.getChatAttachmentImageSource(attachmentId),
@@ -580,6 +582,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         </View>
       </SafeAreaView>
 
+      {/* ===== Health Connect 横幅（保留原有） ===== */}
       {!healthConnect.connected || healthConnect.error !== null ? (
         <Pressable
           accessibilityRole="button"
@@ -598,6 +601,50 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           </Text>
         </Pressable>
       ) : null}
+
+      {/* ===== 新增：Gadgetbridge 独立横幅 ===== */}
+      <Pressable
+        accessibilityRole="button"
+        disabled={gadgetbridge.checking || gadgetbridge.syncing}
+        onPress={() => {
+          if (gadgetbridge.connected) {
+            void gadgetbridge.sync();
+          } else {
+            void gadgetbridge.connect();
+          }
+        }}
+        style={({ pressed }) => [
+          styles.gadgetbridgeNotice,
+          (gadgetbridge.checking || gadgetbridge.syncing) &&
+          styles.gadgetbridgeNoticeDisabled,
+          pressed &&
+          !gadgetbridge.checking &&
+          !gadgetbridge.syncing &&
+          styles.gadgetbridgeNoticePressed,
+        ]}
+      >
+        <View style={styles.gadgetbridgeNoticeContent}>
+          <Text style={styles.gadgetbridgeNoticeTitle}>📡 Gadgetbridge 手环</Text>
+          <Text style={styles.gadgetbridgeNoticeText} numberOfLines={1}>
+            {gadgetbridge.checking
+              ? '正在检查手环数据...'
+              : gadgetbridge.syncing
+                ? '⏳ 正在同步...'
+                : gadgetbridge.error
+                  ? `⚠️ ${gadgetbridge.error}`
+                  : gadgetbridge.connected
+                    ? `已连接，${gadgetbridge.heartRateCount || 0} 条心率记录`
+                    : '点击连接，从 Gadgetbridge 导入手环数据'}
+          </Text>
+        </View>
+        <Text style={styles.gadgetbridgeNoticeAction}>
+          {gadgetbridge.checking || gadgetbridge.syncing
+            ? '...'
+            : gadgetbridge.connected
+              ? '同步'
+              : '连接'}
+        </Text>
+      </Pressable>
 
       {state.error === null ? null : (
         <Pressable
@@ -787,10 +834,10 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
               uploadingAttachment
                 ? '正在上传附件…'
                 : state.pendingRequestId !== null
-                ? '正在回复…'
-                : state.historyLoading
-                  ? '正在读取对话…'
-                  : '输入健康问题或说说近况…'
+                  ? '正在回复…'
+                  : state.historyLoading
+                    ? '正在读取对话…'
+                    : '输入健康问题或说说近况…'
             }
             placeholderTextColor={colors.faint}
             style={styles.input}
@@ -814,9 +861,9 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             style={({ pressed }) => [
               styles.sendButton,
               state.pendingRequestId === null &&
-                (draft.trim().length === 0 && attachment === null ||
-                  state.historyLoading || uploadingAttachment) &&
-                styles.sendButtonDisabled,
+              (draft.trim().length === 0 && attachment === null ||
+                state.historyLoading || uploadingAttachment) &&
+              styles.sendButtonDisabled,
               pressed && styles.sendButtonPressed,
             ]}
           >
@@ -917,6 +964,15 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         }}
         username={user.username}
         visible={showMenu}
+        // ===== 新增：Gadgetbridge props =====
+        gadgetbridgeChecking={gadgetbridge.checking}
+        gadgetbridgeConnected={gadgetbridge.connected}
+        gadgetbridgeSyncing={gadgetbridge.syncing}
+        gadgetbridgeError={gadgetbridge.error}
+        gadgetbridgeProgress={gadgetbridge.progress}
+        gadgetbridgeLastSyncedAt={gadgetbridge.lastSyncedAt}
+        onGadgetbridgeConnect={gadgetbridge.connect}
+        onGadgetbridgeSync={gadgetbridge.sync}
       />
 
       <ExpoStatusBar style="dark" />
@@ -982,6 +1038,36 @@ const styles = StyleSheet.create({
     color: colors.primaryPressed,
     fontFamily: typefaces.sansMedium,
     fontSize: 11,
+  },
+  gadgetbridgeNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    backgroundColor: '#F0F8FC',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#B8D9E8',
+  },
+  gadgetbridgeNoticeDisabled: { opacity: 0.5 },
+  gadgetbridgeNoticePressed: { opacity: 0.7 },
+  gadgetbridgeNoticeContent: { flex: 1, gap: 1 },
+  gadgetbridgeNoticeTitle: {
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 12,
+  },
+  gadgetbridgeNoticeText: {
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  gadgetbridgeNoticeAction: {
+    color: '#0A7C6B',
+    fontFamily: typefaces.sansMedium,
+    fontSize: 12,
   },
   errorBanner: {
     flexDirection: 'row',

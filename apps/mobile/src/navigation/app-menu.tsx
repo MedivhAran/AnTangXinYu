@@ -3,6 +3,7 @@ import {
   FolderHeartIcon,
   Message01Icon,
   Settings04Icon,
+  SmartWatch01Icon,  // 新增：手环图标
 } from '@hugeicons/core-free-icons';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,7 +26,23 @@ type Props = {
   onSelectConversation: (messageId: string) => void;
   username: string;
   visible: boolean;
+  // ===== 新增：Gadgetbridge 相关 props =====
+  gadgetbridgeChecking?: boolean;
+  gadgetbridgeConnected?: boolean;
+  gadgetbridgeSyncing?: boolean;
+  gadgetbridgeError?: string | null;
+  gadgetbridgeProgress?: string | null;
+  gadgetbridgeLastSyncedAt?: string | null;
+  onGadgetbridgeConnect?: () => void;
+  onGadgetbridgeSync?: () => void;
 };
+
+function formatLastSync(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
 
 export function AppMenu({
   conversations,
@@ -35,8 +52,28 @@ export function AppMenu({
   onSelectConversation,
   username,
   visible,
+  // ===== 新增：Gadgetbridge props 默认值 =====
+  gadgetbridgeChecking = false,
+  gadgetbridgeConnected = false,
+  gadgetbridgeSyncing = false,
+  gadgetbridgeError = null,
+  gadgetbridgeProgress = null,
+  gadgetbridgeLastSyncedAt = null,
+  onGadgetbridgeConnect = () => { },
+  onGadgetbridgeSync = () => { },
 }: Props) {
   let previousGroup: string | null = null;
+
+  // Gadgetbridge 状态文案
+  const gadgetbridgeBusy = gadgetbridgeChecking || gadgetbridgeSyncing;
+  const gadgetbridgeStatus = gadgetbridgeChecking
+    ? '正在检查手环数据...'
+    : gadgetbridgeProgress ??
+    (gadgetbridgeLastSyncedAt === null
+      ? gadgetbridgeConnected
+        ? '手环数据已就绪'
+        : '点击连接，从 Gadgetbridge 导入数据'
+      : `上次同步 ${formatLastSync(gadgetbridgeLastSyncedAt)}`);
 
   return (
     <Modal
@@ -77,6 +114,7 @@ export function AppMenu({
             </Pressable>
           </View>
 
+          {/* ===== 原有的健康档案入口 ===== */}
           <Pressable
             accessibilityLabel="健康档案"
             accessibilityRole="button"
@@ -94,6 +132,48 @@ export function AppMenu({
               <Text style={styles.healthHint}>档案、手环与健康记录</Text>
             </View>
             <AppIcon color={colors.muted} icon={ArrowRight01Icon} size={20} />
+          </Pressable>
+
+          {/* ===== 新增：Gadgetbridge 独立入口 ===== */}
+          <Pressable
+            accessibilityLabel="Gadgetbridge 手环同步"
+            accessibilityRole="button"
+            disabled={gadgetbridgeBusy}
+            onPress={gadgetbridgeConnected ? onGadgetbridgeSync : onGadgetbridgeConnect}
+            style={({ pressed }) => [
+              styles.gadgetbridgeEntry,
+              gadgetbridgeBusy && styles.gadgetbridgeEntryDisabled,
+              pressed && !gadgetbridgeBusy && styles.gadgetbridgeEntryPressed,
+            ]}
+          >
+            <View style={styles.gadgetbridgeIcon}>
+              <AppIcon color="#0A7C6B" icon={SmartWatch01Icon} size={26} />
+            </View>
+            <View style={styles.gadgetbridgeCopy}>
+              <View style={styles.gadgetbridgeTitleRow}>
+                <Text style={styles.gadgetbridgeTitle}>Gadgetbridge 手环</Text>
+                {gadgetbridgeConnected ? (
+                  <View style={styles.connectedBadge}>
+                    <Text style={styles.connectedBadgeText}>已连接</Text>
+                  </View>
+                ) : (
+                  <View style={styles.disconnectedBadge}>
+                    <Text style={styles.disconnectedBadgeText}>未连接</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.gadgetbridgeHint} numberOfLines={1}>
+                {gadgetbridgeBusy ? '⏳ 同步中...' : gadgetbridgeStatus}
+              </Text>
+              {gadgetbridgeError ? (
+                <Text style={styles.gadgetbridgeError} numberOfLines={2}>
+                  ⚠️ {gadgetbridgeError}
+                </Text>
+              ) : null}
+            </View>
+            <Text style={styles.gadgetbridgeAction}>
+              {gadgetbridgeBusy ? '...' : gadgetbridgeConnected ? '同步' : '连接'}
+            </Text>
           </Pressable>
 
           <View style={styles.sectionHeading}>
@@ -195,6 +275,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper,
   },
   pressed: { opacity: 0.64 },
+
+  // ===== 原有的健康档案样式 =====
   healthEntry: {
     minHeight: 82,
     flexDirection: 'row',
@@ -228,6 +310,80 @@ const styles = StyleSheet.create({
     fontFamily: typefaces.sans,
     fontSize: 12,
   },
+
+  // ===== 新增：Gadgetbridge 样式 =====
+  gadgetbridgeEntry: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: '#B8D9E8',
+    borderRadius: radii.lg,
+    borderCurve: 'continuous',
+    backgroundColor: '#F0F8FC',
+  },
+  gadgetbridgeEntryPressed: { opacity: 0.74, transform: [{ scale: 0.99 }] },
+  gadgetbridgeEntryDisabled: { opacity: 0.5 },
+  gadgetbridgeIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: colors.paper,
+  },
+  gadgetbridgeCopy: { flex: 1, gap: 2 },
+  gadgetbridgeTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  gadgetbridgeTitle: {
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 14,
+  },
+  connectedBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radii.pill,
+    backgroundColor: '#15966A',
+  },
+  connectedBadgeText: {
+    color: colors.white,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 9,
+  },
+  disconnectedBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radii.pill,
+    backgroundColor: '#D1D5DB',
+  },
+  disconnectedBadgeText: {
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 9,
+  },
+  gadgetbridgeHint: {
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 11,
+  },
+  gadgetbridgeError: {
+    color: colors.danger,
+    fontFamily: typefaces.sans,
+    fontSize: 10,
+  },
+  gadgetbridgeAction: {
+    color: '#0A7C6B',
+    fontFamily: typefaces.sansMedium,
+    fontSize: 13,
+  },
+
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'center',
