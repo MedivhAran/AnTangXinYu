@@ -34,6 +34,7 @@ const initialState: HealthConnectState = {
 
 // ============ 上传函数 ============
 async function uploadToBackend(
+
   userId: string,
   heartRates: Array<{ timestamp: string; heartRate: number }>,
   steps: Array<{ timestamp: string; steps: number }>,
@@ -44,7 +45,7 @@ async function uploadToBackend(
     return { success: false, message: '登录已过期，请重新登录' };
   }
 
-  const endpoint = `${API_URL.replace(/\/+$/, '')}/api/v1/health-profile/wearable-imports`;
+  const endpoint = `${API_URL.replace(/\/+$/, '')} /api/v1 / health - profile / wearable - imports`;
 
   const avgHeartRate =
     heartRates.length > 0
@@ -55,6 +56,7 @@ async function uploadToBackend(
   const totalSteps = steps.reduce((a, b) => a + b.steps, 0);
 
   const payload = {
+    client_sync_id: `gb-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     userId,
     source: 'gadgetbridge',
     fileName,
@@ -72,7 +74,7 @@ async function uploadToBackend(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${tokens.accessToken}`,
+        Authorization: `Bearer ${tokens.accessToken} `,
       },
       body: JSON.stringify(payload),
     });
@@ -82,7 +84,7 @@ async function uploadToBackend(
       return {
         success: false,
         status: response.status,
-        message: `上传失败 (${response.status}): ${text.slice(0, 200)}`,
+        message: `上传失败(${response.status}): ${text.slice(0, 200)} `,
       };
     }
 
@@ -176,7 +178,7 @@ export function useGadgetbridge(userId?: string) {
         }));
         Alert.alert(
           '✅ 手环数据已上传',
-          `${result.message}\n\n${upload.message}\n\n现在可以在聊天里问我："分析一下我的手环数据"`,
+          `${result.message} \n\n${upload.message} \n\n现在可以在聊天里问我："分析一下我的手环数据"`,
         );
       } else {
         setState((prev) => ({
