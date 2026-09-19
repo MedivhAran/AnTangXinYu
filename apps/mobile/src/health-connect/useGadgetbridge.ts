@@ -2,14 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { API_URL } from '../config';
+import { API_URL, IS_DEMO_MODE } from '../config';
 import { errorMessage } from '../api/client';
 import {
   previewGadgetbridgeData,
   syncGadgetbridgeData,
 } from '../services/GadgetbridgeService';
 
-// ===== 状态类型（与原有 HealthConnectState 保持一致） =====
 export type HealthConnectState = {
   checking: boolean;
   connected: boolean;
@@ -36,29 +35,21 @@ const initialState: HealthConnectState = {
   backgroundDisabling: false,
 };
 
-// ===== 从 AsyncStorage 获取用户信息 =====
 async function getStoredAuth(): Promise<{ userId: string; token: string }> {
   try {
-    const userId = await AsyncStorage.getItem('userId') || '';
-    const token = await AsyncStorage.getItem('token') || '';
+    const userId = (await AsyncStorage.getItem('userId')) || '';
+    const token = (await AsyncStorage.getItem('token')) || '';
     return { userId, token };
   } catch {
     return { userId: '', token: '' };
   }
 }
 
-// ===== 主 Hook =====
-export function useGadgetbridge(
-  _userId?: string,
-  _importer?: any,
-  _gateway?: any,
-  _tokenStore?: any,
-) {
+export function useGadgetbridge(_userId?: string) {
   const [state, setState] = useState(initialState);
   const mounted = useRef(true);
   const syncController = useRef<AbortController | null>(null);
 
-  // 刷新状态：检查本地是否有 CSV 数据
   const refreshStatus = useCallback(async () => {
     try {
       const result = await previewGadgetbridgeData();
@@ -85,169 +76,136 @@ export function useGadgetbridge(
     }
   }, []);
 
-  // 执行同步
-  const runSync = useCallback(
-    async (_requestPermissions: boolean): Promise<void> => {
-      if (syncController.current) {
-        console.log('同步已在进行中');
-        return;
-      }
+  const runSync = useCallback(async (_requestPermissions: boolean): Promise<void> => {
+    if (syncController.current) return;
+    const controller = new AbortController();
+    syncController.current = controller;
 
-      const controller = new AbortController();
-      syncController.current = controller;
+    if (mounted.current) {
+      setState((prev) => ({
+        ...prev,
+        syncing: true,
+        progress: '正在读取手环数据...',
+        error: null,
+      }));
+    }
 
-      const { userId, token } = await getStoredAuth();
+    try {
+      // ============ 演示模式：只读取 CSV，不上传 ============
+      if (IS_DEMO_MODE) {
+        const result = await previewGadgetbridgeData();
+        if (controller.signal.aborted) return;
 
-      if (!userId || !token) {
-        if (mounted.current) {
-          setState((prev) => ({
-            ...prev,
-            syncing: false,
-            error: '请先登录',
-          }));
-        }
-        syncController.current = null;
-        return;
-      }
-
-      if (mounted.current) {
-        setState((prev) => ({
-          ...prev,
-          syncing: true,
-          progress: '正在同步手环数据...',
-          error: null,
-        }));
-      }
-
-      try {
-        // ✅ 使用项目配置的 API_URL，而不是硬编码
-        const result = await syncGadgetbridgeData(API_URL, userId, token);
-
-        if (controller.signal.aborted) {
-          console.log('同步被取消');
-          return;
-        }
-
-        if (mounted.current) {
-          if (result.success) {
+        if (!result.success) {
+          if (mounted.current) {
             setState((prev) => ({
               ...prev,
-              connected: true,
-              syncing: false,
-              progress: null,
-              lastSyncedAt: new Date().toISOString(),
-              error: null,
-            }));
-          } else {
-            setState((prev) => ({
-              ...prev,
-              connected: false,
               syncing: false,
               progress: null,
               error: result.message,
             }));
           }
+          Alert.alert('读取失败', result.message);
+          return;
         }
-      } catch (error) {
+
+        const heartCount = result.heartRates?.length ?? 0;
+        const stepCount = result.steps?.length ?? 0;
+
+        if (mounted.current) {
+          setState((prev) => ({
+            ...prev,
+            connected: true,
+            syncing: false,
+            progress: null,
+            lastSyncedAt: new Date().toISOString(),
+            error: null,
+          }));
+        }
+        Alert.alert(
+          '✅ 手环数据读取成功',
+          `心率: ${heartCount} 条\n步数: ${stepCount} 条\n\n（演示模式：数据未上传后端）`,
+        );
+        return;
+      }
+
+      // ============ 正常模式：需要登录 ============
+      const { userId, token } = await getStoredAuth();
+      if (!userId || !token) {
         if (mounted.current) {
           setState((prev) => ({
             ...prev,
             syncing: false,
             progress: null,
-            error: errorMessage(error),
+            error: '请先登录',
           }));
         }
-      } finally {
-        if (syncController.current === controller) {
-          syncController.current = null;
+        return;
+      }
+
+      const result = await syncGadgetbridgeData(API_URL, userId, token);
+      if (controller.signal.aborted) return;
+
+      if (mounted.current) {
+        if (result.success) {
+          setState((prev) => ({
+            ...prev,
+            connected: true,
+            syncing: false,
+            progress: null,
+            lastSyncedAt: new Date().toISOString(),
+            error: null,
+          }));
+        } else {
+          setState((prev) => ({
+            ...prev,
+            syncing: false,
+            progress: null,
+            error: result.message,
+          }));
         }
       }
-    },
-    [],
-  );
+    } catch (error) {
+      if (mounted.current) {
+        setState((prev) => ({
+          ...prev,
+          syncing: false,
+          progress: null,
+          error: errorMessage(error),
+        }));
+      }
+    } finally {
+      if (syncController.current === controller) syncController.current = null;
+    }
+  }, []);
 
-  // 对外暴露的方法
   const connect = useCallback(() => runSync(true), [runSync]);
   const sync = useCallback(() => runSync(false), [runSync]);
 
   const stop = useCallback(() => {
-    if (syncController.current) {
-      syncController.current.abort(new Error('手环同步已取消'));
-      syncController.current = null;
-    }
+    syncController.current?.abort(new Error('已取消'));
+    syncController.current = null;
     if (mounted.current) {
-      setState((prev) => ({
-        ...prev,
-        syncing: false,
-        progress: null,
-      }));
+      setState((prev) => ({ ...prev, syncing: false, progress: null }));
     }
   }, []);
 
-  // 后台同步（保留真实开关）
   const enableBackground = useCallback(async (): Promise<void> => {
-    try {
-      await AsyncStorage.setItem('backgroundSyncEnabled', 'true');
-      if (mounted.current) {
-        setState((prev) => ({
-          ...prev,
-          backgroundStatus: 'enabled',
-          backgroundError: null,
-        }));
-      }
-      Alert.alert('提示', '后台同步已开启');
-    } catch (e) {
-      Alert.alert('错误', '开启后台同步失败');
-    }
+    Alert.alert('提示', '演示模式下不支持后台同步');
   }, []);
 
   const disableBackground = useCallback(async (): Promise<void> => {
-    try {
-      await AsyncStorage.removeItem('backgroundSyncEnabled');
-      if (mounted.current) {
-        setState((prev) => ({
-          ...prev,
-          backgroundStatus: 'disabled',
-          backgroundError: null,
-        }));
-      }
-      Alert.alert('提示', '后台同步已关闭');
-    } catch (e) {
-      Alert.alert('错误', '关闭后台同步失败');
-    }
+    Alert.alert('提示', '演示模式下不支持后台同步');
   }, []);
 
-  // 初始化
   useEffect(() => {
     mounted.current = true;
     refreshStatus();
-
-    AsyncStorage.getItem('backgroundSyncEnabled').then((enabled) => {
-      if (mounted.current) {
-        setState((prev) => ({
-          ...prev,
-          backgroundStatus: enabled === 'true' ? 'enabled' : 'disabled',
-        }));
-      }
-    });
-
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        refreshStatus();
-        AsyncStorage.getItem('backgroundSyncEnabled').then((enabled) => {
-          if (enabled === 'true') {
-            runSync(false);
-          }
-        });
-      }
-    });
-
     return () => {
       mounted.current = false;
-      syncController.current?.abort(new Error('组件已卸载'));
-      subscription.remove();
+      syncController.current?.abort();
     };
-  }, [refreshStatus, runSync]);
+  }, [refreshStatus]);
 
   return {
     ...state,
