@@ -287,3 +287,73 @@ export async function syncGadgetbridgeData(
     };
   }
 }
+
+
+import * as DocumentPicker from 'expo-document-picker';
+
+/**
+ * 让用户手动选择一个 CSV 文件并解析
+ * 用于绕过 Android 沙箱限制（App 无法读取 Gadgetbridge 的私有目录）
+ */
+export async function pickAndReadCSV(): Promise<{
+  success: boolean;
+  message: string;
+  heartRates?: HeartRateRecord[];
+  steps?: StepRecord[];
+  fileName?: string;
+}> {
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: '*/*',
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+
+    if (result.canceled || !result.assets || result.assets.length === 0) {
+      return { success: false, message: '未选择文件' };
+    }
+
+    const file = result.assets[0];
+    const fileName = file.name || 'unknown';
+    const lowerName = fileName.toLowerCase();
+
+    if (!lowerName.endsWith('.csv')) {
+      return {
+        success: false,
+        message:
+          `当前只支持 CSV 文件。你选的是：${fileName}\n\n` +
+          `Gadgetbridge 导出的 .db 数据库需要先在电脑上用「DB Browser for SQLite」导出为 CSV，再传到手机上。`,
+      };
+    }
+
+    const content = await FileSystem.readAsStringAsync(file.uri);
+    const parsed = parseCSVContent(content);
+
+    if (parsed.heartRates.length === 0 && parsed.steps.length === 0) {
+      return {
+        success: false,
+        message: `文件 ${fileName} 中未找到心率或步数数据`,
+        fileName,
+      };
+    }
+
+    const avgHeartRate =
+      parsed.heartRates.length > 0
+        ? Math.round(
+          parsed.heartRates.reduce((a, b) => a + b.heartRate, 0) /
+          parsed.heartRates.length,
+        )
+        : 0;
+    const totalSteps = parsed.steps.reduce((a, b) => a + b.steps, 0);
+
+    return {
+      success: true,
+      message: `文件: ${fileName}\n心率: ${parsed.heartRates.length} 条（平均 ${avgHeartRate} bpm）\n步数: ${parsed.steps.length} 条（总计 ${totalSteps} 步）`,
+      heartRates: parsed.heartRates,
+      steps: parsed.steps,
+      fileName,
+    };
+  } catch (error: any) {
+    return { success: false, message: error?.message || '读取失败' };
+  }
+}
