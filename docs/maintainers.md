@@ -66,7 +66,17 @@ docker compose -p antang-prod -f compose.yaml -f compose.server.yaml ps
 curl --fail https://82.157.48.200:8000/health
 ```
 
-发布后端改动前，先同步已评审的源码和镜像、备份两套数据库并检查迁移。服务器使用 `compose.server.yaml` 将 API 限定在本机端口；更新时也要带上这个文件和项目名。CI 不自动部署联调后端。首次迁移的备份位于维护者 WSL 的 `/home/medivh/antang-backups/20260923` 和服务器的 `/home/ubuntu/antang-backups/20260923`，两处文件仅限所有者读取。
+发布普通 API 改动前，先备份两套数据库并检查迁移。服务器跟踪 Gitee 的 `codex/team-development` 分支；确认提交已通过评审和检查后，在服务器执行：
+
+```bash
+cd /home/ubuntu/antang-prod
+git pull --ff-only
+docker compose -p antang-prod -f compose.yaml -f compose.server.yaml build api
+docker compose -p antang-prod -f compose.yaml -f compose.server.yaml up -d --no-build --wait api proactive-care-worker
+curl --fail https://82.157.48.200:8000/health
+```
+
+服务器已验证可独立构建 API 镜像，本地 Docker 不参与日常后端运行和这类更新。Hindsight PostgreSQL 镜像使用可跨 CPU 运行的 pgvector 编译参数；修改这个镜像或数据库结构时，应单独安排迁移。CI 不自动部署联调后端。首次迁移的备份位于维护者 WSL 的 `/home/medivh/antang-backups/20260923` 和服务器的 `/home/ubuntu/antang-backups/20260923`，两处文件仅限所有者读取。
 
 公网 IP 证书有效期约六天。`antang-certbot.timer` 每天检查两次，证书更新后自动重载 Nginx；2026-09-23 已通过续期演练。检查定时器和证书可用性：
 
@@ -83,8 +93,9 @@ Expo 的开发、预览环境已改为新 HTTPS 地址。安装包内的地址�
 
 - 手机端检查与 Android JS 打包：通过，23 组 / 148 个测试；另用不含本地配置、依赖的干净源码副本完整跑通。
 - 后端迁移、测试与临时数据库清理：通过，290 个测试；干净源码副本也已跑通，临时容器和网络已清理。
+- 服务器联调后端：五个服务已启动；主库迁移后有 6 个用户、176 条消息和 82,170 条手环观测，Hindsight 有 5 个 bank 和 27 条记忆；公网 HTTPS 注册、流式聊天与证书续期演练通过，本地业务容器已停止。
 - EAS 开发、预览环境：已确认均配置当前 API 地址；上传归档只包含移动端与非秘密示例配置。
-- [开发 APK](https://expo.dev/accounts/wocky528/projects/antang/builds/788bdfc9-4753-48d4-b28f-62283a337922) 与 [预览 APK](https://expo.dev/accounts/wocky528/projects/antang/builds/39f4f7a0-f716-4af1-a9e6-c43fc8a3fc27)：均为 `FINISHED`，对应提交 `69bbf61`，可在构建页下载安装。
+- [开发 APK](https://expo.dev/accounts/wocky528/projects/antang/builds/788bdfc9-4753-48d4-b28f-62283a337922) 已完成，对应提交 `69bbf61`；使用 Metro 时会读取本地新的 API 地址。[新预览 APK 构建页](https://expo.dev/accounts/wocky528/projects/antang/builds/bc5a1e32-ac6f-4733-b4eb-72164894f939) 对应提交 `2bdfa77`，只在状态为 `FINISHED` 后分发。旧预览包内仍是旧 API 地址。
 - Gitee 云端执行：已开通并验证推送自动触发；每个提交的两个检查任务都通过后，再进入合并评审。最新结果在仓库“流水线”页面查看。
 - `main` 分支保护：已开启并回读确认；自动检查的强制合并门槛尚未验证。
 - 真机安装、手环同步与通知体验：由团队成员在对应手机上验收。
