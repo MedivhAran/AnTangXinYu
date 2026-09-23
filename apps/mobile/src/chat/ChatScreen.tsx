@@ -54,6 +54,7 @@ import { useHealthProfileCards } from '../health-profile/use-health-profile-card
 import { useHealthConnect } from '../health-connect/use-health-connect';
 import { useGadgetbridge } from '../health-connect/useGadgetbridge';
 import { HealthOverviewScreen } from '../health-overview';
+import { HealthDashboardScreen } from '../health/HealthDashboardScreen';
 import { AppMenu, type ConversationAnchor } from '../navigation/app-menu';
 import { useNotifications } from '../notifications/use-notifications';
 import { CareSettingsModal } from '../proactive-care/care-settings-modal';
@@ -102,6 +103,8 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [showCareSettings, setShowCareSettings] = useState(false);
   const [showHealthOverview, setShowHealthOverview] = useState(false);
+  // ===== 新增：健康看板 =====
+  const [showDashboard, setShowDashboard] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [showReportPicker, setShowReportPicker] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -318,7 +321,8 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         dispatch({ type: 'transport-failed', message: errorMessage(error) });
       }
     } finally {
-      if (streamController.current === controller) streamController.current = null;
+      if (streamController.current === controller)
+        streamController.current = null;
       await refreshHealthProfileCards();
     }
   }
@@ -602,7 +606,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         </Pressable>
       ) : null}
 
-      {/* ===== 新增：Gadgetbridge 独立横幅 ===== */}
+      {/* ===== Gadgetbridge 独立横幅 ===== */}
       <Pressable
         accessibilityRole="button"
         disabled={gadgetbridge.checking || gadgetbridge.syncing}
@@ -728,9 +732,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             />
           </View>
         }
-        onRefresh={
-          state.pendingRequestId === null ? refreshLatest : undefined
-        }
+        onRefresh={state.pendingRequestId === null ? refreshLatest : undefined}
         onScroll={({ nativeEvent }) => {
           const distanceFromEnd =
             nativeEvent.contentSize.height -
@@ -772,7 +774,11 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
                 pressed && styles.quickActionPressed,
               ]}
             >
-              <AppIcon color={colors.primaryPressed} icon={FileChartLineIcon} size={20} />
+              <AppIcon
+                color={colors.primaryPressed}
+                icon={FileChartLineIcon}
+                size={20}
+              />
               <Text style={styles.quickActionText}>报告解读</Text>
             </Pressable>
             <Pressable
@@ -785,7 +791,11 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
                 pressed && styles.quickActionPressed,
               ]}
             >
-              <AppIcon color={colors.primaryPressed} icon={FolderHeartIcon} size={20} />
+              <AppIcon
+                color={colors.primaryPressed}
+                icon={FolderHeartIcon}
+                size={20}
+              />
               <Text style={styles.quickActionText}>健康档案</Text>
             </Pressable>
             <Pressable
@@ -850,8 +860,9 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             accessibilityRole="button"
             disabled={
               state.pendingRequestId === null &&
-              (draft.trim().length === 0 && attachment === null ||
-                state.historyLoading || uploadingAttachment)
+              ((draft.trim().length === 0 && attachment === null) ||
+                state.historyLoading ||
+                uploadingAttachment)
             }
             onPress={
               state.pendingRequestId !== null
@@ -861,8 +872,9 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             style={({ pressed }) => [
               styles.sendButton,
               state.pendingRequestId === null &&
-              (draft.trim().length === 0 && attachment === null ||
-                state.historyLoading || uploadingAttachment) &&
+              ((draft.trim().length === 0 && attachment === null) ||
+                state.historyLoading ||
+                uploadingAttachment) &&
               styles.sendButtonDisabled,
               pressed && styles.sendButtonPressed,
             ]}
@@ -947,6 +959,13 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         />
       </Modal>
 
+      {/* ===== 新增：健康看板 Modal ===== */}
+      <HealthDashboardScreen
+        visible={showDashboard}
+        onClose={() => setShowDashboard(false)}
+        bundle={gadgetbridge.lastBundle}
+      />
+
       <AppMenu
         conversations={conversationAnchors}
         onClose={() => setShowMenu(false)}
@@ -958,13 +977,17 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           setShowMenu(false);
           setShowCareSettings(true);
         }}
+        // ===== 新增：健康看板入口 =====
+        onOpenDashboard={() => {
+          setShowMenu(false);
+          setShowDashboard(true);
+        }}
         onSelectConversation={(messageId) => {
           setTargetMessageId(messageId);
           setShowMenu(false);
         }}
         username={user.username}
         visible={showMenu}
-        // ===== 新增：Gadgetbridge props =====
         gadgetbridgeChecking={gadgetbridge.checking}
         gadgetbridgeConnected={gadgetbridge.connected}
         gadgetbridgeSyncing={gadgetbridge.syncing}
@@ -1179,7 +1202,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.md,
   },
-  dateRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.line },
+  dateRule: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.line,
+  },
   dateText: {
     color: colors.faint,
     fontFamily: typefaces.sansMedium,

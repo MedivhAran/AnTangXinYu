@@ -108,25 +108,3 @@ const styles = StyleSheet.create({
 });
 
 
-//预览
-import { previewGadgetbridgeData, syncGadgetbridgeData } from '../services/GadgetbridgeService';
-
-// 测试预览（不上传）
-const handlePreview = async () => {
-  const result = await previewGadgetbridgeData();
-  console.log('预览结果:', result.message);
-  if (result.heartRates) {
-    console.log('前5条心率:', result.heartRates.slice(0, 5));
-  }
-  Alert.alert('预览结果', result.message);
-};
-
-// 测试同步（上传到后端）
-const handleSync = async () => {
-  const result = await syncGadgetbridgeData(
-    'http://你的后端地址/api/v1/health/sync',
-    userId,
-    token
-  );
-  Alert.alert(result.success ? '✅ 成功' : '❌ 失败', result.message);
-};

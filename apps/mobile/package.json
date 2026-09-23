@@ -21,10 +21,12 @@
     "expo-notifications": "~57.0.9",
     "expo-secure-store": "~57.0.1",
     "expo-splash-screen": "~57.0.5",
+    "expo-sqlite": "~57.0.3",
     "expo-status-bar": "~57.0.1",
     "expo-task-manager": "~57.0.8",
     "react": "19.2.3",
     "react-native": "0.86.2",
+    "react-native-chart-kit": "^7.0.4",
     "react-native-health-connect": "3.5.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4"

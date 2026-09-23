@@ -1,15 +1,23 @@
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as DocumentPicker from 'expo-document-picker';
+import * as SQLite from 'expo-sqlite';
 
-// ===== 类型定义 =====
-export type HeartRateRecord = {
-  timestamp: string;
-  heartRate: number;
-};
+// ===== 类型 =====
+export type HeartRateRecord = { timestamp: string; heartRate: number };
+export type StepRecord = { timestamp: string; steps: number };
+export type Spo2Record = { timestamp: string; spo2: number };
+export type RestingHrRecord = { timestamp: string; restingHeartRate: number };
+export type CaloriesRecord = { timestamp: string; calories: number };
+export type DistanceRecord = { timestamp: string; distance: number };
 
-export type StepRecord = {
-  timestamp: string;
-  steps: number;
+export type HealthBundle = {
+  heartRates: HeartRateRecord[];
+  steps: StepRecord[];
+  spo2: Spo2Record[];
+  restingHeartRates: RestingHrRecord[];
+  calories: CaloriesRecord[];
+  distance: DistanceRecord[];
 };
 
 export type SyncResult = {
@@ -18,288 +26,25 @@ export type SyncResult = {
   data?: any;
   heartRates?: HeartRateRecord[];
   steps?: StepRecord[];
+  bundle?: HealthBundle;
   fileName?: string;
 };
 
-// ===== 获取 Gadgetbridge 导出目录 =====
-function getExportDir(): string {
-  const base = FileSystem.ExternalDirectoryPath || '/storage/emulated/0';
-  return `${base}/Gadgetbridge/files/export`;
+// ===== 工具：时间戳统一转 ISO =====
+// Gadgetbridge 导出的 TIMESTAMP 是 Unix 秒；有的设备给毫秒，做个兼容
+function toIso(ts: number | string): string {
+  const n = typeof ts === 'string' ? parseInt(ts, 10) : ts;
+  if (!n || isNaN(n)) return '';
+  const ms = n > 1e12 ? n : n * 1000;
+  return new Date(ms).toISOString();
 }
 
-// ===== 1. 检查目录是否存在 =====
-export async function isGadgetbridgeExportAvailable(): Promise<boolean> {
-  if (Platform.OS !== 'android') return false;
-  try {
-    const dir = getExportDir();
-    const dirInfo = await FileSystem.getInfoAsync(dir);
-    return dirInfo.exists;
-  } catch {
-    return false;
-  }
-}
-
-// ===== 2. 获取所有 CSV 文件列表 =====
-export async function getCSVFiles(): Promise<FileSystem.FileInfo[]> {
-  const dir = getExportDir();
-  const dirInfo = await FileSystem.getInfoAsync(dir);
-  if (!dirInfo.exists) {
-    throw new Error('Gadgetbridge 导出目录不存在，请先在 Gadgetbridge 中导出数据');
-  }
-
-  const files = await FileSystem.readDirectoryAsync(dir);
-  const csvFiles: FileSystem.FileInfo[] = [];
-
-  for (const fileName of files) {
-    if (fileName.toLowerCase().endsWith('.csv')) {
-      const filePath = `${dir}/${fileName}`;
-      const fileInfo = await FileSystem.getInfoAsync(filePath);
-      if (fileInfo.exists) {
-        csvFiles.push(fileInfo);
-      }
-    }
-  }
-
-  csvFiles.sort((a, b) => b.uri.localeCompare(a.uri));
-  return csvFiles;
-}
-
-// ===== 3. 解析 CSV（按表头匹配，不靠猜） =====
-export function parseCSVContent(content: string): {
-  heartRates: HeartRateRecord[];
-  steps: StepRecord[];
-  headers: string[];
-} {
-  const lines = content.split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0);
-
-  const heartRates: HeartRateRecord[] = [];
-  const steps: StepRecord[] = [];
-
-  if (lines.length < 2) {
-    return { heartRates, steps, headers: [] };
-  }
-
-  const headerLine = lines[0];
-  const headers = headerLine.split(',').map(h => h.trim().toLowerCase());
-
-  let heartRateCol = -1;
-  let stepsCol = -1;
-  let timestampCol = 0;
-
-  for (let i = 0; i < headers.length; i++) {
-    const h = headers[i];
-    if (h.includes('heart') || h.includes('心率')) heartRateCol = i;
-    if (h.includes('step') || h.includes('步数')) stepsCol = i;
-    if (h.includes('timestamp') || h.includes('time') || h.includes('日期') || h.includes('时间')) {
-      timestampCol = i;
-    }
-  }
-
-  for (let i = 1; i < lines.length; i++) {
-    const parts = lines[i].split(',').map(s => s.trim());
-    if (parts.length < 2) continue;
-
-    const timestamp = parts[timestampCol] || '';
-
-    let heartRate = 0;
-    let stepValue = 0;
-
-    if (heartRateCol >= 0 && heartRateCol < parts.length) {
-      heartRate = parseInt(parts[heartRateCol]) || 0;
-    }
-    if (stepsCol >= 0 && stepsCol < parts.length) {
-      stepValue = parseInt(parts[stepsCol]) || 0;
-    }
-
-    // 备选：如果没找到明确的列，尝试按范围推断（仅当匹配失败时）
-    if (heartRateCol === -1 && stepsCol === -1) {
-      for (let j = 0; j < Math.min(parts.length, 6); j++) {
-        const val = parseInt(parts[j]);
-        if (isNaN(val)) continue;
-        if (val >= 30 && val <= 220 && heartRate === 0) {
-          heartRate = val;
-        } else if (val > 0 && val < 100000 && stepValue === 0) {
-          stepValue = val;
-        }
-      }
-    }
-
-    if (heartRate > 0) {
-      heartRates.push({ timestamp, heartRate });
-    }
-    if (stepValue > 0) {
-      steps.push({ timestamp, steps: stepValue });
-    }
-  }
-
-  return { heartRates, steps, headers };
-}
-
-// ===== 4. 读取最新的 CSV 文件 =====
-export async function readLatestCSV(): Promise<{
-  heartRates: HeartRateRecord[];
-  steps: StepRecord[];
-  fileName: string;
-  headers: string[];
-}> {
-  const csvFiles = await getCSVFiles();
-  if (csvFiles.length === 0) {
-    throw new Error('未找到 CSV 文件');
-  }
-
-  const latestFile = csvFiles[0];
-  const content = await FileSystem.readAsStringAsync(latestFile.uri);
-  const { heartRates, steps, headers } = parseCSVContent(content);
-  const fileName = latestFile.uri.split('/').pop() || 'unknown.csv';
-
-  return { heartRates, steps, fileName, headers };
-}
-
-// ===== 5. 预览数据 =====
-export async function previewGadgetbridgeData(): Promise<{
+// ===== 1. 选文件：优先 .db，也允许 .csv 兜底 =====
+export async function pickHealthFile(): Promise<{
   success: boolean;
   message: string;
-  heartRates?: HeartRateRecord[];
-  steps?: StepRecord[];
-  fileName?: string;
-}> {
-  try {
-    const available = await isGadgetbridgeExportAvailable();
-    if (!available) {
-      return { success: false, message: '未找到 Gadgetbridge 数据，请先在 Gadgetbridge 中导出 CSV' };
-    }
-
-    const { heartRates, steps, fileName } = await readLatestCSV();
-
-    if (heartRates.length === 0 && steps.length === 0) {
-      return { success: false, message: `文件 ${fileName} 中未找到心率或步数数据` };
-    }
-
-    const avgHeartRate = heartRates.length > 0
-      ? Math.round(heartRates.reduce((a, b) => a + b.heartRate, 0) / heartRates.length)
-      : 0;
-    const totalSteps = steps.reduce((a, b) => a + b.steps, 0);
-
-    return {
-      success: true,
-      message: `✅ 心率: ${heartRates.length} 条 (平均 ${avgHeartRate} bpm)\n步数: ${steps.length} 条 (总计 ${totalSteps} 步)`,
-      heartRates,
-      steps,
-      fileName,
-    };
-  } catch (error: any) {
-    return { success: false, message: error?.message || '预览失败' };
-  }
-}
-
-// ===== 6. 分批上传到后端 =====
-export async function syncGadgetbridgeData(
-  backendUrl: string,
-  userId: string,
-  token: string
-): Promise<SyncResult> {
-  const baseUrl = backendUrl.replace(/\/+$/, '');
-  const endpoint = `${baseUrl}/api/v1/health-profile/wearable-imports`;
-
-  try {
-    const preview = await previewGadgetbridgeData();
-    if (!preview.success || !preview.heartRates) {
-      return { success: false, message: preview.message };
-    }
-
-    const { heartRates, steps, fileName } = preview;
-    const totalSteps = steps?.reduce((a, b) => a + b.steps, 0) || 0;
-    const avgHeartRate = heartRates.length > 0
-      ? Math.round(heartRates.reduce((a, b) => a + b.heartRate, 0) / heartRates.length)
-      : 0;
-
-    // 分批上传（每批 500 条）
-    const BATCH_SIZE = 500;
-    const batches: HeartRateRecord[][] = [];
-    for (let i = 0; i < heartRates.length; i += BATCH_SIZE) {
-      batches.push(heartRates.slice(i, i + BATCH_SIZE));
-    }
-
-    let uploadedCount = 0;
-    let failedBatches = 0;
-
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      const payload = {
-        userId,
-        source: 'gadgetbridge',
-        fileName,
-        batch: i + 1,
-        totalBatches: batches.length,
-        totalSteps,
-        avgHeartRate,
-        heartRateCount: heartRates.length,
-        heartRates: batch,
-        steps: steps || [],
-        syncedAt: new Date().toISOString(),
-      };
-
-      try {
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`第 ${i + 1} 批上传失败:`, errorText);
-          failedBatches++;
-        } else {
-          uploadedCount += batch.length;
-        }
-      } catch (err) {
-        console.error(`第 ${i + 1} 批请求失败:`, err);
-        failedBatches++;
-      }
-    }
-
-    if (failedBatches > 0 && uploadedCount === 0) {
-      return {
-        success: false,
-        message: `上传失败：全部 ${batches.length} 批均失败`,
-        heartRates,
-        steps,
-      };
-    }
-
-    return {
-      success: true,
-      message: `✅ 同步完成！心率 ${uploadedCount} 条，步数 ${steps?.length || 0} 条${failedBatches > 0 ? ` (${failedBatches} 批失败)` : ''}`,
-      heartRates,
-      steps,
-      data: { total: uploadedCount, failedBatches },
-    };
-  } catch (error: any) {
-    return {
-      success: false,
-      message: error?.message || '同步失败',
-    };
-  }
-}
-
-
-import * as DocumentPicker from 'expo-document-picker';
-
-/**
- * 让用户手动选择一个 CSV 文件并解析
- * 用于绕过 Android 沙箱限制（App 无法读取 Gadgetbridge 的私有目录）
- */
-export async function pickAndReadCSV(): Promise<{
-  success: boolean;
-  message: string;
-  heartRates?: HeartRateRecord[];
-  steps?: StepRecord[];
+  kind?: 'db' | 'csv';
+  uri?: string;
   fileName?: string;
 }> {
   try {
@@ -309,51 +54,327 @@ export async function pickAndReadCSV(): Promise<{
       multiple: false,
     });
 
-    if (result.canceled || !result.assets || result.assets.length === 0) {
+    if (result.canceled || !result.assets?.length) {
       return { success: false, message: '未选择文件' };
     }
 
     const file = result.assets[0];
-    const fileName = file.name || 'unknown';
-    const lowerName = fileName.toLowerCase();
-
-    if (!lowerName.endsWith('.csv')) {
-      return {
-        success: false,
-        message:
-          `当前只支持 CSV 文件。你选的是：${fileName}\n\n` +
-          `Gadgetbridge 导出的 .db 数据库需要先在电脑上用「DB Browser for SQLite」导出为 CSV，再传到手机上。`,
-      };
-    }
-
-    const content = await FileSystem.readAsStringAsync(file.uri);
-    const parsed = parseCSVContent(content);
-
-    if (parsed.heartRates.length === 0 && parsed.steps.length === 0) {
-      return {
-        success: false,
-        message: `文件 ${fileName} 中未找到心率或步数数据`,
-        fileName,
-      };
-    }
-
-    const avgHeartRate =
-      parsed.heartRates.length > 0
-        ? Math.round(
-          parsed.heartRates.reduce((a, b) => a + b.heartRate, 0) /
-          parsed.heartRates.length,
-        )
-        : 0;
-    const totalSteps = parsed.steps.reduce((a, b) => a + b.steps, 0);
+    const name = (file.name || 'unknown').toLowerCase();
+    const kind: 'db' | 'csv' = name.endsWith('.db') ? 'db' : 'csv';
 
     return {
       success: true,
-      message: `文件: ${fileName}\n心率: ${parsed.heartRates.length} 条（平均 ${avgHeartRate} bpm）\n步数: ${parsed.steps.length} 条（总计 ${totalSteps} 步）`,
-      heartRates: parsed.heartRates,
-      steps: parsed.steps,
-      fileName,
+      message: '已选择',
+      kind,
+      uri: file.uri,
+      fileName: file.name || 'unknown',
     };
-  } catch (error: any) {
-    return { success: false, message: error?.message || '读取失败' };
+  } catch (e: any) {
+    return { success: false, message: e?.message || '选择文件失败' };
+  }
+}
+
+// ===== 2. 读 .db（expo-sqlite）=====
+export async function parseGadgetbridgeDb(uri: string): Promise<HealthBundle> {
+  // 必须复制到 expo-sqlite 默认目录，openDatabaseAsync 不接受任意绝对路径
+  const sqliteDir = `${FileSystem.documentDirectory}SQLite/`;
+  await FileSystem.makeDirectoryAsync(sqliteDir, { intermediates: true });
+
+  const destName = `gb_import_${Date.now()}.db`;
+  const destUri = `${sqliteDir}${destName}`;
+
+  // 清理同名（理论上不会重名，但保险）
+  try {
+    await FileSystem.deleteAsync(destUri, { idempotent: true });
+  } catch { }
+
+  await FileSystem.copyAsync({ from: uri, to: destUri });
+
+  const db = await SQLite.openDatabaseAsync(destName);
+
+  // 动态找表：优先包含 ACTIVITY 的表，否则找字段最像的
+  const tables = await db.getAllAsync<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type='table'`
+  );
+  const tableNames = tables.map(t => t.name);
+  if (tableNames.length === 0) {
+    await db.closeAsync();
+    throw new Error('数据库里没有表');
+  }
+
+  // 优先 HUAWEI_ACTIVITY_SAMPLE / MI_BAND_ACTIVITY_SAMPLE，其次任何含 ACTIVITY 的
+  let tableName =
+    tableNames.find(n => /HUAWEI_ACTIVITY_SAMPLE/i.test(n)) ||
+    tableNames.find(n => /ACTIVITY_SAMPLE/i.test(n)) ||
+    tableNames.find(n => /ACTIVITY/i.test(n));
+
+  if (!tableName) {
+    // 最后兜底：找一个同时有 TIMESTAMP 和 HEART_RATE 的表
+    for (const n of tableNames) {
+      const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${n})`);
+      const set = new Set(cols.map(c => c.name.toUpperCase()));
+      if (set.has('TIMESTAMP') && (set.has('HEART_RATE') || set.has('STEPS'))) {
+        tableName = n;
+        break;
+      }
+    }
+  }
+
+  if (!tableName) {
+    await db.closeAsync();
+    throw new Error(`未找到活动数据表。现有表: ${tableNames.join(', ')}`);
+  }
+
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${tableName})`);
+  const colSet = new Set(cols.map(c => c.name.toUpperCase()));
+
+  const wanted = [
+    'TIMESTAMP',
+    'HEART_RATE',
+    'STEPS',
+    'SPO',
+    'RESTING_HEART_RATE',
+    'CALORIES',
+    'DISTANCE',
+  ].filter(c => colSet.has(c));
+
+  if (!wanted.includes('TIMESTAMP')) {
+    await db.closeAsync();
+    throw new Error(`表 ${tableName} 没有 TIMESTAMP 字段`);
+  }
+
+  const rows = await db.getAllAsync<Record<string, number>>(
+    `SELECT ${wanted.join(',')} FROM ${tableName} ORDER BY TIMESTAMP ASC`
+  );
+
+  await db.closeAsync();
+
+  return aggregateRows(rows, wanted);
+}
+
+// ===== 3. 行聚合：同一秒多行取有效值；-1 视为无效 =====
+function aggregateRows(
+  rows: Record<string, number>[],
+  wanted: string[]
+): HealthBundle {
+  const bundle: HealthBundle = {
+    heartRates: [],
+    steps: [],
+    spo2: [],
+    restingHeartRates: [],
+    calories: [],
+    distance: [],
+  };
+
+  // 按 TIMESTAMP 聚合（同一秒可能有两行：聚合行 + 活动行）
+  const byTs = new Map<number, Record<string, number>>();
+
+  for (const row of rows) {
+    const ts = Number(row['TIMESTAMP']);
+    if (!ts || ts <= 0) continue;
+
+    const cur = byTs.get(ts) || {};
+    for (const key of wanted) {
+      const v = Number(row[key]);
+      if (v === undefined || v === null || isNaN(v) || v < 0) continue;
+      // 已有更大的有效值就保留；步数/卡路里等取"最大值"更贴近真实
+      if (cur[key] === undefined || v > cur[key]) {
+        cur[key] = v;
+      }
+    }
+    byTs.set(ts, cur);
+  }
+
+  for (const [ts, v] of byTs.entries()) {
+    const iso = toIso(ts);
+
+    if (v['HEART_RATE'] !== undefined && v['HEART_RATE'] > 0) {
+      bundle.heartRates.push({ timestamp: iso, heartRate: v['HEART_RATE'] });
+    }
+    if (v['STEPS'] !== undefined) {
+      // 步数允许 0，保留（看板画图需要连续）
+      bundle.steps.push({ timestamp: iso, steps: v['STEPS'] });
+    }
+    if (v['SPO'] !== undefined && v['SPO'] > 0) {
+      bundle.spo2.push({ timestamp: iso, spo2: v['SPO'] });
+    }
+    if (v['RESTING_HEART_RATE'] !== undefined && v['RESTING_HEART_RATE'] > 0) {
+      bundle.restingHeartRates.push({
+        timestamp: iso,
+        restingHeartRate: v['RESTING_HEART_RATE'],
+      });
+    }
+    if (v['CALORIES'] !== undefined && v['CALORIES'] > 0) {
+      bundle.calories.push({ timestamp: iso, calories: v['CALORIES'] });
+    }
+    if (v['DISTANCE'] !== undefined && v['DISTANCE'] > 0) {
+      bundle.distance.push({ timestamp: iso, distance: v['DISTANCE'] });
+    }
+  }
+
+  return bundle;
+}
+
+// ===== 4. CSV 兜底（保留你原来的路径，但改多指标 + ISO 时间）=====
+export function parseCSVContent(content: string): HealthBundle & { headers: string[] } {
+  const lines = content
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
+  const empty: HealthBundle & { headers: string[] } = {
+    heartRates: [],
+    steps: [],
+    spo2: [],
+    restingHeartRates: [],
+    calories: [],
+    distance: [],
+    headers: [],
+  };
+
+  if (lines.length < 2) return empty;
+
+  const headers = lines[0].split(',').map(h => h.trim().toUpperCase());
+  const idx = (names: string[]) =>
+    headers.findIndex(h => names.some(n => h.includes(n)));
+
+  const col = {
+    ts: idx(['TIMESTAMP', 'TIME', '日期', '时间']),
+    hr: idx(['HEART_RATE', 'HEART', '心率']),
+    steps: idx(['STEPS', 'STEP', '步数']),
+    spo: idx(['SPO']),
+    restingHr: idx(['RESTING_HEART_RATE']),
+    cal: idx(['CALORIES']),
+    dist: idx(['DISTANCE']),
+  };
+
+  if (col.ts < 0) return empty;
+
+  const bundle: HealthBundle = {
+    heartRates: [],
+    steps: [],
+    spo2: [],
+    restingHeartRates: [],
+    calories: [],
+    distance: [],
+  };
+
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(',').map(s => s.trim());
+    if (parts.length < 2) continue;
+
+    const ts = parseInt(parts[col.ts], 10);
+    if (!ts || isNaN(ts)) continue;
+    const iso = toIso(ts);
+
+    const num = (c: number) => (c >= 0 ? parseInt(parts[c], 10) : NaN);
+
+    const hr = num(col.hr);
+    if (!isNaN(hr) && hr > 0) bundle.heartRates.push({ timestamp: iso, heartRate: hr });
+
+    const st = num(col.steps);
+    if (!isNaN(st) && st >= 0) bundle.steps.push({ timestamp: iso, steps: st });
+
+    const spo = num(col.spo);
+    if (!isNaN(spo) && spo > 0) bundle.spo2.push({ timestamp: iso, spo2: spo });
+
+    const rhr = num(col.restingHr);
+    if (!isNaN(rhr) && rhr > 0)
+      bundle.restingHeartRates.push({ timestamp: iso, restingHeartRate: rhr });
+
+    const cal = num(col.cal);
+    if (!isNaN(cal) && cal > 0) bundle.calories.push({ timestamp: iso, calories: cal });
+
+    const dist = num(col.dist);
+    if (!isNaN(dist) && dist > 0) bundle.distance.push({ timestamp: iso, distance: dist });
+  }
+
+  return { ...bundle, headers };
+}
+
+// ===== 5. 统一入口：选文件 → 解析 → 返回 bundle =====
+export async function pickAndParseHealth(): Promise<{
+  success: boolean;
+  message: string;
+  kind?: 'db' | 'csv';
+  fileName?: string;
+  bundle?: HealthBundle;
+}> {
+  const picked = await pickHealthFile();
+  if (!picked.success || !picked.uri) {
+    return { success: false, message: picked.message };
+  }
+
+  try {
+    let bundle: HealthBundle;
+    if (picked.kind === 'db') {
+      bundle = await parseGadgetbridgeDb(picked.uri);
+    } else {
+      const content = await FileSystem.readAsStringAsync(picked.uri);
+      const parsed = parseCSVContent(content);
+      bundle = parsed;
+    }
+
+    const total =
+      bundle.heartRates.length +
+      bundle.steps.length +
+      bundle.spo2.length +
+      bundle.restingHeartRates.length;
+
+    if (total === 0) {
+      return {
+        success: false,
+        message: `文件 ${picked.fileName} 中未解析到任何健康数据`,
+        kind: picked.kind,
+        fileName: picked.fileName,
+      };
+    }
+
+    const summary = [
+      `心率 ${bundle.heartRates.length} 条`,
+      `步数 ${bundle.steps.length} 条`,
+      bundle.spo2.length ? `血氧 ${bundle.spo2.length} 条` : null,
+      bundle.restingHeartRates.length ? `静息心率 ${bundle.restingHeartRates.length} 条` : null,
+    ]
+      .filter(Boolean)
+      .join('，');
+
+    return {
+      success: true,
+      message: summary,
+      kind: picked.kind,
+      fileName: picked.fileName,
+      bundle,
+    };
+  } catch (e: any) {
+    return { success: false, message: e?.message || '解析失败' };
+  }
+}
+
+// ===== 6. 兼容旧调用（保留 CSV 专用入口，避免别处引用直接挂）=====
+export async function pickAndReadCSV() {
+  const r = await pickAndParseHealth();
+  return {
+    success: r.success,
+    message: r.message,
+    heartRates: r.bundle?.heartRates,
+    steps: r.bundle?.steps,
+    fileName: r.fileName,
+  };
+}
+
+// ===== 7. 保留你原来的外部目录扫描（不删，兼容旧 UI 调用）=====
+function getExportDir(): string {
+  const base = (FileSystem as any).ExternalDirectoryPath || '/storage/emulated/0';
+  return `${base}/Gadgetbridge/files/export`;
+}
+
+export async function isGadgetbridgeExportAvailable(): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  try {
+    const info = await FileSystem.getInfoAsync(getExportDir());
+    return info.exists;
+  } catch {
+    return false;
   }
 }

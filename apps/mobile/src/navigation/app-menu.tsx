@@ -4,6 +4,7 @@ import {
   Message01Icon,
   Settings04Icon,
   SmartWatch01Icon,  // 新增：手环图标
+  ChartLineData01Icon,  // 新增：看板图标
 } from '@hugeicons/core-free-icons';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,6 +24,7 @@ type Props = {
   onClose: () => void;
   onOpenHealth: () => void;
   onOpenSettings: () => void;
+  onOpenDashboard?: () => void;   // ← 新增
   onSelectConversation: (messageId: string) => void;
   username: string;
   visible: boolean;
@@ -49,6 +51,7 @@ export function AppMenu({
   onClose,
   onOpenHealth,
   onOpenSettings,
+  onOpenDashboard = () => { },   // ← 新增
   onSelectConversation,
   username,
   visible,
@@ -130,6 +133,26 @@ export function AppMenu({
             <View style={styles.healthCopy}>
               <Text style={styles.healthTitle}>健康档案</Text>
               <Text style={styles.healthHint}>档案、手环与健康记录</Text>
+            </View>
+            <AppIcon color={colors.muted} icon={ArrowRight01Icon} size={20} />
+          </Pressable>
+
+          {/* ===== 新增：健康看板入口 ===== */}
+          <Pressable
+            accessibilityLabel="健康看板"
+            accessibilityRole="button"
+            onPress={onOpenDashboard}
+            style={({ pressed }) => [
+              styles.healthEntry,
+              pressed && styles.healthEntryPressed,
+            ]}
+          >
+            <View style={styles.healthIcon}>
+              <AppIcon color={colors.primaryPressed} icon={ChartLineData01Icon} size={26} />
+            </View>
+            <View style={styles.healthCopy}>
+              <Text style={styles.healthTitle}>健康看板</Text>
+              <Text style={styles.healthHint}>心率、步数、血氧、睡眠趋势</Text>
             </View>
             <AppIcon color={colors.muted} icon={ArrowRight01Icon} size={20} />
           </Pressable>
