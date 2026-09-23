@@ -6,12 +6,12 @@
 | --- | --- |
 | 代码与 PR | [Gitee 仓库](https://gitee.com/medivharan/antang) |
 | 开发包与预览包 | [Expo 构建页](https://expo.dev/accounts/wocky528/projects/antang/builds) |
-| App 当前 API 入口 | `https://106.15.194.0`，2026-09-06 健康检查正常 |
-| 实际 Docker 服务 | 目前在维护者电脑运行；公网转发链路未在本次配置中更改 |
+| App 当前 API 入口 | `https://82.157.48.200:8000`，2026-09-23 公网 HTTPS、注册和流式聊天已验证 |
+| 实际 Docker 服务 | 服务器 `/home/ubuntu/antang-prod` 中的五个 Compose 服务；维护者电脑上的旧容器已停止 |
 | 自动检查 | Gitee `.workflow/check.yml`，推送自动触发已验证 |
 | 手动出包 | `bash scripts/build-android development` 或 `preview` |
 
-公网地址可访问，不等于已有一套全天在线、数据独立的测试服务器。当前入口沿用现有后端，团队成员使用自己的测试账号；CI 始终使用临时数据库。维护者电脑和转发链路停机时，联调入口可能不可用。
+团队联调后端现在由服务器独立运行。2026-09-23 已迁移主数据库和 Hindsight 数据库；原本地数据卷和迁移备份保留，CI 继续使用临时数据库。现有安装包仍包含构建时的旧地址，需要安装新包才能连接新入口。
 
 ## Gitee 自动检查
 
@@ -57,15 +57,25 @@ bash scripts/build-android preview
 
 ## 更新联调后端
 
-当前后端在维护者的 WSL Ubuntu 内，由根目录 Compose 管理。合并后端改动、确认数据库迁移影响并做好数据库备份后，在该目录执行：
+当前后端在 `82.157.48.200` 的 `/home/ubuntu/antang-prod`，Compose 项目名为 `antang-prod`。Nginx 在公网 `8000` 端口提供 HTTPS，API 容器只映射到服务器本机的 `8001` 端口；`80` 端口仅用于证书验证。服务器上的旧试验分支和数据卷仍保留，但旧容器已停用。检查运行状态：
 
 ```bash
-docker compose up --build -d api proactive-care-worker
-curl --fail http://127.0.0.1:8000/health
-curl --fail https://106.15.194.0/health
+ssh ubuntu@82.157.48.200
+cd /home/ubuntu/antang-prod
+docker compose -p antang-prod -f compose.yaml -f compose.server.yaml ps
+curl --fail https://82.157.48.200:8000/health
 ```
 
-这一步会更新正在使用的服务，由维护者选择时间执行。CI 不自动部署当前联调后端。更换 API 地址时，同时更新 Expo 的开发、预览环境；已有预览 APK 中的地址不会自动改变，需要重新出包。
+发布后端改动前，先同步已评审的源码和镜像、备份两套数据库并检查迁移。服务器使用 `compose.server.yaml` 将 API 限定在本机端口；更新时也要带上这个文件和项目名。CI 不自动部署联调后端。首次迁移的备份位于维护者 WSL 的 `/home/medivh/antang-backups/20260923` 和服务器的 `/home/ubuntu/antang-backups/20260923`，两处文件仅限所有者读取。
+
+公网 IP 证书有效期约六天。`antang-certbot.timer` 每天检查两次，证书更新后自动重载 Nginx；2026-09-23 已通过续期演练。检查定时器和证书可用性：
+
+```bash
+systemctl list-timers antang-certbot.timer
+sudo /opt/antang-certbot/bin/certbot renew --dry-run --no-random-sleep-on-renew
+```
+
+Expo 的开发、预览环境已改为新 HTTPS 地址。安装包内的地址不会自动改变，改地址后必须重新出包；生产环境仍单独管理。
 
 ## 验收与待接通事项
 

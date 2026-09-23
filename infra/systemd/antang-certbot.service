@@ -1,0 +1,6 @@
+[Unit]
+Description=Renew Antang HTTPS certificate
+
+[Service]
+Type=oneshot
+ExecStart=/opt/antang-certbot/bin/certbot renew --quiet --no-random-sleep-on-renew

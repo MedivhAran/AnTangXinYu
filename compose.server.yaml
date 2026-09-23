@@ -1,0 +1,14 @@
+services:
+  api:
+    # Host Nginx terminates HTTPS on public port 8000.
+    ports: !override
+      - "127.0.0.1:8001:8000"
+
+  hindsight:
+    environment:
+      HF_HUB_OFFLINE: "1"
+
+volumes:
+  hindsight_model_cache:
+    external: true
+    name: antang-prod_hindsight_model_cache
