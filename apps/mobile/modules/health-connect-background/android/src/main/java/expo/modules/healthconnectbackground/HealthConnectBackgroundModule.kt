@@ -4,6 +4,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.feature.ExperimentalFeatureAvailabilityApi
 import androidx.health.connect.client.permission.HealthPermission
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -31,7 +32,7 @@ class HealthConnectBackgroundModule : Module() {
       ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
     }
 
-    AsyncFunction("hasHistoryReadPermission") {
+    AsyncFunction("hasHistoryReadPermission") Coroutine { ->
       val context = requireNotNull(appContext.reactContext) {
         "React context is unavailable"
       }
