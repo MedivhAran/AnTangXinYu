@@ -628,7 +628,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         ]}
       >
         <View style={styles.gadgetbridgeNoticeContent}>
-          <Text style={styles.gadgetbridgeNoticeTitle}>📡 Gadgetbridge 手环</Text>
+          <Text style={styles.gadgetbridgeNoticeTitle}>📡 华为手环导入</Text>
           <Text style={styles.gadgetbridgeNoticeText} numberOfLines={1}>
             {gadgetbridge.checking
               ? '正在检查手环数据...'
@@ -638,7 +638,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
                   ? `⚠️ ${gadgetbridge.error}`
                   : gadgetbridge.connected
                     ? `已连接，${gadgetbridge.heartRateCount || 0} 条心率记录`
-                    : '点击连接，从 Gadgetbridge 导入手环数据'}
+                    : '选择华为手环的 Gadgetbridge 导出文件'}
           </Text>
         </View>
         <Text style={styles.gadgetbridgeNoticeAction}>

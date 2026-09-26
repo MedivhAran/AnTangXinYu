@@ -126,6 +126,8 @@ export type HealthBundle = {
   version: 2;
   bucketMinutes: number;
   fileName: string;
+  /** Gadgetbridge 导出文件的修改时间；用于辨别再次导入的版本。 */
+  exportModifiedAt: string;
   heartRates: HeartRateRecord[];
   steps: StepRecord[];
   spo2: Spo2Record[];
@@ -226,24 +228,51 @@ async function tableColumns(
   return new Set(rows.map((row) => row.name.toUpperCase()));
 }
 
-/** 找活动数据表。华为优先，其次任何带 TIMESTAMP 与心率或步数的表。 */
+/** 仅接受已按华为 Band 9 导出库校准的活动表。 */
 async function findActivityTable(
   db: SQLite.SQLiteDatabase,
   tables: string[],
 ): Promise<string | null> {
-  const preferred = tables.find((name) => /HUAWEI_ACTIVITY_SAMPLE/i.test(name));
-  if (preferred !== undefined) return preferred;
+  const table = tables.find((name) => name.toUpperCase() === 'HUAWEI_ACTIVITY_SAMPLE');
+  if (table === undefined) return null;
+  const row = await db.getFirstAsync<{ RECORD_COUNT: number }>(
+    `SELECT COUNT(*) AS RECORD_COUNT FROM ${table}`,
+  );
+  return (row?.RECORD_COUNT ?? 0) > 0 ? table : null;
+}
 
-  for (const name of tables) {
-    const columns = await tableColumns(db, name);
-    if (
-      columns.has('TIMESTAMP') &&
-      (columns.has('HEART_RATE') || columns.has('STEPS'))
-    ) {
-      return name;
-    }
+type HuaweiSource = { deviceId: number; userId: number };
+
+export function singleHuaweiSource(
+  rows: { DEVICE_ID: number; USER_ID: number }[],
+): HuaweiSource | null {
+  if (rows.length === 0) return null;
+  if (rows.length !== 1 ||
+      !Number.isSafeInteger(rows[0].DEVICE_ID) ||
+      !Number.isSafeInteger(rows[0].USER_ID)) {
+    throw new Error('Gadgetbridge 导出库含多台华为手环或多个用户，当前不能安全合并导入');
   }
-  return null;
+  return { deviceId: rows[0].DEVICE_ID, userId: rows[0].USER_ID };
+}
+
+async function verifyTableSource(
+  db: SQLite.SQLiteDatabase,
+  table: string,
+  expected?: HuaweiSource,
+): Promise<HuaweiSource | null> {
+  const columns = await tableColumns(db, table);
+  if (!columns.has('DEVICE_ID') || !columns.has('USER_ID')) {
+    throw new Error(`Gadgetbridge ${table} 缺少设备或用户标识，无法安全导入`);
+  }
+  const rows = await db.getAllAsync<{ DEVICE_ID: number; USER_ID: number }>(
+    `SELECT DISTINCT DEVICE_ID, USER_ID FROM ${table} LIMIT 2`,
+  );
+  const source = singleHuaweiSource(rows);
+  if (source !== null && expected !== undefined &&
+      (source.deviceId !== expected.deviceId || source.userId !== expected.userId)) {
+    throw new Error(`Gadgetbridge ${table} 与活动数据属于不同设备或用户`);
+  }
+  return source;
 }
 
 /**
@@ -290,6 +319,7 @@ export async function pickHealthFile(): Promise<{
   message: string;
   uri?: string;
   fileName?: string;
+  lastModified?: number;
 }> {
   const result = await DocumentPicker.getDocumentAsync({
     type: '*/*',
@@ -307,6 +337,7 @@ export async function pickHealthFile(): Promise<{
     message: '已选择',
     uri: file.uri,
     fileName: file.name || 'gadgetbridge.db',
+    lastModified: file.lastModified,
   };
 }
 
@@ -420,9 +451,10 @@ async function readDaily(context: ActivityContext): Promise<DailySummary[]> {
   const { db, table, columns, scale } = context;
   const day = 86400 * scale;
   const zoneOffset = -new Date().getTimezoneOffset() * 60 * scale;
-  const guard = (column: string) => (columns.has(column) ? column : '0');
   const aggregate = (column: string, fn: 'MIN' | 'MAX' | 'AVG') =>
-    `${fn}(CASE WHEN ${guard(column)} > 0 THEN ${column} END) AS ${fn}_${column}`;
+    columns.has(column)
+      ? `${fn}(CASE WHEN ${column} > 0 THEN ${column} END) AS ${fn}_${column}`
+      : `NULL AS ${fn}_${column}`;
   const total = (column: string) =>
     columns.has(column)
       ? `SUM(CASE WHEN ${column} >= 0 THEN ${column} ELSE 0 END) AS SUM_${column}`
@@ -554,9 +586,11 @@ async function readSleep(
   db: SQLite.SQLiteDatabase,
   family: string | null,
   tables: string[],
+  source: HuaweiSource,
 ): Promise<SleepSession[]> {
   const stageTable = await findTable(db, tables, family, /SLEEP_STAGE_SAMPLE/i, 'STAGE');
   if (stageTable === null) return [];
+  await verifyTableSource(db, stageTable, source);
 
   const stageRows = await db.getAllAsync<SleepStageRow>(
     `SELECT TIMESTAMP, STAGE FROM ${stageTable} ORDER BY TIMESTAMP ASC`,
@@ -567,6 +601,8 @@ async function readSleep(
   if (statsTable === null) {
     return buildSleepSessions(stageRows, [], stageScale, 1);
   }
+
+  await verifyTableSource(db, statsTable, source);
 
   const statsRows = await db.getAllAsync<SleepStatsRow>(
     `SELECT * FROM ${statsTable} ORDER BY TIMESTAMP ASC`,
@@ -579,9 +615,11 @@ async function readStress(
   db: SQLite.SQLiteDatabase,
   family: string | null,
   tables: string[],
+  source: HuaweiSource,
 ): Promise<StressRecord[]> {
   const table = await findTable(db, tables, family, /STRESS_SAMPLE/i, 'STRESS');
   if (table === null) return [];
+  await verifyTableSource(db, table, source);
   const rows = await db.getAllAsync<{ TIMESTAMP: number; STRESS: number }>(
     `SELECT TIMESTAMP, STRESS FROM ${table} WHERE STRESS >= 0 ORDER BY TIMESTAMP ASC`,
   );
@@ -599,13 +637,15 @@ async function readStress(
 async function readDevice(
   db: SQLite.SQLiteDatabase,
   tables: string[],
+  source: HuaweiSource,
 ): Promise<DeviceInfo | null> {
   if (!tables.some((name) => name.toUpperCase() === 'DEVICE')) return null;
+  if (!(await tableColumns(db, 'DEVICE')).has('_ID')) return null;
   const row = await db.getFirstAsync<{
     MANUFACTURER: string | null;
     MODEL: string | null;
     NAME: string | null;
-  }>(`SELECT MANUFACTURER, MODEL, NAME FROM DEVICE LIMIT 1`);
+  }>(`SELECT MANUFACTURER, MODEL, NAME FROM DEVICE WHERE _id = ? LIMIT 1`, source.deviceId);
   if (row === null || row === undefined) return null;
   return {
     manufacturer: row.MANUFACTURER ?? null,
@@ -614,7 +654,7 @@ async function readDevice(
   };
 }
 
-function summarise(bundle: Omit<HealthBundle, 'version' | 'fileName' | 'totals'>): HealthTotals {
+function summarise(bundle: Omit<HealthBundle, 'version' | 'fileName' | 'exportModifiedAt' | 'totals'>): HealthTotals {
   const heartRateValues = bundle.heartRates.map((item) => item.heartRate);
   const spo2Values = bundle.spo2.map((item) => item.spo2);
   const restingValues = bundle.restingHeartRates.map((item) => item.restingHeartRate);
@@ -675,7 +715,12 @@ function summarise(bundle: Omit<HealthBundle, 'version' | 'fileName' | 'totals'>
 export async function parseGadgetbridgeDb(
   uri: string,
   fileName: string,
+  lastModified: number,
 ): Promise<HealthBundle> {
+  if (!Number.isFinite(lastModified) || lastModified <= 0) {
+    throw new Error('Gadgetbridge 导出文件缺少有效的修改时间');
+  }
+  const exportModifiedAt = new Date(lastModified).toISOString();
   // expo-sqlite 只能打开自己目录下的库，必须先复制过来
   const sqliteDir = `${FileSystem.documentDirectory}SQLite/`;
   await FileSystem.makeDirectoryAsync(sqliteDir, { intermediates: true });
@@ -697,10 +742,12 @@ export async function parseGadgetbridgeDb(
     const table = await findActivityTable(db, tables);
     if (table === null) {
       throw new Error(
-        `这个文件里没有活动数据表（${tables.length} 张表）。请确认选的是 Gadgetbridge「导出数据库」生成的文件。`,
+        '这个文件里没有华为手环活动数据。请选含华为 Band 9 记录的 Gadgetbridge 导出数据库。',
       );
     }
 
+    const source = await verifyTableSource(db, table);
+    if (source === null) throw new Error('华为手环活动表为空');
     const columns = await tableColumns(db, table);
     const scale = await timeScale(db, table);
     const family = activityFamily(table);
@@ -713,9 +760,9 @@ export async function parseGadgetbridgeDb(
         readRestingHeartRates(context),
         readBuckets(context),
         readDaily(context),
-        readSleep(db, family, tables),
-        readStress(db, family, tables),
-        readDevice(db, tables),
+        readSleep(db, family, tables, source),
+        readStress(db, family, tables, source),
+        readDevice(db, tables, source),
       ]);
 
     const partial = {
@@ -732,7 +779,7 @@ export async function parseGadgetbridgeDb(
       device,
     };
 
-    return { version: 2, fileName, ...partial, totals: summarise(partial) };
+    return { version: 2, fileName, exportModifiedAt, ...partial, totals: summarise(partial) };
   } finally {
     await db.closeAsync();
   }
@@ -747,7 +794,7 @@ export async function pickAndParseHealth(): Promise<ParsedHealth> {
   const fileName = picked.fileName ?? 'gadgetbridge.db';
 
   try {
-    const bundle = await parseGadgetbridgeDb(picked.uri, fileName);
+    const bundle = await parseGadgetbridgeDb(picked.uri, fileName, picked.lastModified ?? NaN);
     const { totals } = bundle;
 
     if (totals.heartRateCount + totals.stepBucketCount + totals.sleepSessionCount === 0) {

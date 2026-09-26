@@ -31,6 +31,7 @@ from antang_api.schemas.health_profile import (
 )
 
 _PROVIDER = "health_connect"
+_ZEPP_SOURCE_PACKAGE = "com.huami.watch.hmwatchmanager"
 _TWO_DECIMALS = Decimal("0.01")
 
 
@@ -158,17 +159,19 @@ async def process_wearable_import(
                 "record_type_changed",
                 record_id=external_record_id,
             )
+        if observation.data_hash == data_hash:
+            if record.source_last_modified_at > observation.source_last_modified_at:
+                observation.source_last_modified_at = record.source_last_modified_at
+            imported.records_unchanged += 1
+            continue
         if record.source_last_modified_at < observation.source_last_modified_at:
             imported.records_unchanged += 1
             continue
         if record.source_last_modified_at == observation.source_last_modified_at:
-            if observation.data_hash != data_hash:
-                raise WearableImportConflictError(
-                    "same_version_different_content",
-                    record_id=external_record_id,
-                )
-            imported.records_unchanged += 1
-            continue
+            raise WearableImportConflictError(
+                "same_version_different_content",
+                record_id=external_record_id,
+            )
 
         _update_observation(
             observation,
@@ -210,6 +213,33 @@ async def read_latest_wearable_observations(
         )
     )
     return [WearableObservationSnapshot.model_validate(item) for item in observations]
+
+
+async def list_health_connect_record_ids(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    record_type: WearableRecordType,
+    after: str | None,
+    limit: int = 1000,
+) -> tuple[list[str], str | None]:
+    """Page through this user's active Zepp IDs for full-history reconciliation."""
+
+    query = select(WearableObservation.external_record_id).where(
+        WearableObservation.user_id == user_id,
+        WearableObservation.provider == _PROVIDER,
+        WearableObservation.source_package == _ZEPP_SOURCE_PACKAGE,
+        WearableObservation.record_type == record_type,
+        WearableObservation.deleted_at.is_(None),
+    )
+    if after is not None:
+        query = query.where(WearableObservation.external_record_id > after)
+    ids = list(
+        await session.scalars(
+            query.order_by(WearableObservation.external_record_id).limit(limit + 1)
+        )
+    )
+    return (ids[:limit], ids[limit - 1]) if len(ids) > limit else (ids, None)
 
 
 async def read_wearable_observations(

@@ -350,6 +350,11 @@ export type WearableImportResponse = {
   recordsDeleted: number;
 };
 
+export type HealthConnectRecordIdsPage = {
+  ids: string[];
+  nextAfter: string | null;
+};
+
 export type MessageStartedEvent = {
   type: 'message_started';
   userMessageId: string;
@@ -1155,6 +1160,16 @@ export function parseWearableImportResponse(
       data.records_deleted,
       'wearable import.records_deleted',
     ),
+  };
+}
+
+export function parseHealthConnectRecordIdsPage(value: unknown): HealthConnectRecordIdsPage {
+  const data = objectValue(value, 'Health Connect record IDs');
+  if (!Array.isArray(data.ids)) throw new Error('Health Connect record IDs.ids 必须是数组');
+  return {
+    ids: data.ids.map((id, index) =>
+      stringValue(id, `Health Connect record IDs.ids[${index}]`)),
+    nextAfter: nullableStringValue(data.next_after, 'Health Connect record IDs.next_after'),
   };
 }
 

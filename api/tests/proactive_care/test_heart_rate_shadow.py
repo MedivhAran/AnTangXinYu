@@ -500,3 +500,38 @@ async def test_gadgetbridge_source_is_evaluated_and_recorded_in_evidence(
     assert result.direction == "high"
     assert result.source_package == "nodomain.freeyourgadget.gadgetbridge"
     assert task.health_evidence == result.evidence()
+
+
+async def test_zepp_window_does_not_mix_overlapping_gadgetbridge_heart_rates(
+    db_session: AsyncSession,
+) -> None:
+    received_at = datetime(2026, 7, 18, 10, 0, 30, tzinfo=timezone.utc)
+    gadgetbridge_task, gadgetbridge_observation = await _heart_rate_task(
+        db_session,
+        received_at=received_at,
+        values=[45] * 30,
+        context_complete=False,
+        source_package="nodomain.freeyourgadget.gadgetbridge",
+    )
+    user = await db_session.get(User, gadgetbridge_observation.user_id)
+    assert user is not None
+    zepp_task, _ = await _heart_rate_task(
+        db_session,
+        received_at=received_at,
+        values=[110] * 30,
+        source_package="com.huami.watch.hmwatchmanager",
+        existing_user=user,
+    )
+
+    blocked = await evaluate_heart_rate_shadow(
+        db_session, task=gadgetbridge_task, timezone_name="UTC"
+    )
+    zepp = await evaluate_heart_rate_shadow(
+        db_session, task=zepp_task, timezone_name="UTC"
+    )
+
+    assert blocked.reason == "context_unknown"
+    assert blocked.source_package == "nodomain.freeyourgadget.gadgetbridge"
+    assert zepp.decision == "candidate"
+    assert zepp.median_bpm == 110
+    assert zepp.source_package == "com.huami.watch.hmwatchmanager"

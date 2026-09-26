@@ -70,6 +70,19 @@ async def test_registration_creates_profile_and_authenticated_profile_api(
         assert body["wearable_latest"] == []
         assert body["heart_rate_trend"] == []
 
+        ids_response = await client.get(
+            "/api/v1/health-profile/wearable-health-connect-ids",
+            params={"record_type": "exercise"},
+            headers=headers,
+        )
+        assert ids_response.status_code == 200
+        assert ids_response.json() == {"ids": [], "next_after": None}
+        unauthorized = await client.get(
+            "/api/v1/health-profile/wearable-health-connect-ids",
+            params={"record_type": "exercise"},
+        )
+        assert unauthorized.status_code == 401
+
         user = await db_session.get(User, auth["user"]["id"])
         assert user is not None
         assert await db_session.get(PersonalProfile, user.id) is not None

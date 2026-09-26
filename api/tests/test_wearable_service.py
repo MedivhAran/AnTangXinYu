@@ -11,6 +11,7 @@ from antang_api.health_profile.errors import (
     WearableObservationNotFoundError,
 )
 from antang_api.health_profile.wearable_service import (
+    list_health_connect_record_ids,
     process_wearable_import,
     read_latest_wearable_observations,
     read_wearable_observation_detail,
@@ -44,6 +45,7 @@ def _steps_request(
     count: int,
     modified_at: datetime,
     external_id: str = "steps-record-1",
+    source_package: str = "com.huami.watch.hmwatchmanager",
 ) -> WearableImportRequest:
     start = datetime(2026, 7, 14, 8, tzinfo=timezone.utc)
     return WearableImportRequest.model_validate(
@@ -58,7 +60,7 @@ def _steps_request(
                     "end_time": (start + timedelta(hours=1)).isoformat(),
                     "start_zone_offset_seconds": 28800,
                     "end_zone_offset_seconds": 28800,
-                    "source_package": "com.huami.watch.hmwatchmanager",
+                    "source_package": source_package,
                     "recording_method": 1,
                     "device": {
                         "manufacturer": "Amazfit",
@@ -71,6 +73,50 @@ def _steps_request(
             ],
         }
     )
+
+
+async def test_recovery_ids_are_paginated_and_scoped_to_user_and_zepp(
+    db_session: AsyncSession,
+) -> None:
+    first_user = await _create_user(db_session)
+    second_user = await _create_user(db_session)
+    modified = datetime(2026, 7, 14, 9, tzinfo=timezone.utc)
+    for user_id, external_id, source_package in (
+        (first_user.id, "zepp-a", "com.huami.watch.hmwatchmanager"),
+        (first_user.id, "zepp-b", "com.huami.watch.hmwatchmanager"),
+        (first_user.id, "gadgetbridge-a", "nodomain.freeyourgadget.gadgetbridge"),
+        (second_user.id, "other-user", "com.huami.watch.hmwatchmanager"),
+    ):
+        await process_wearable_import(
+            db_session,
+            user_id=user_id,
+            request=_steps_request(
+                sync_id=str(uuid4()),
+                count=100,
+                modified_at=modified,
+                external_id=external_id,
+                source_package=source_package,
+            ),
+        )
+
+    first, after = await list_health_connect_record_ids(
+        db_session,
+        user_id=first_user.id,
+        record_type=WearableRecordType.STEPS,
+        after=None,
+        limit=1,
+    )
+    second, next_after = await list_health_connect_record_ids(
+        db_session,
+        user_id=first_user.id,
+        record_type=WearableRecordType.STEPS,
+        after=after,
+        limit=1,
+    )
+    assert first == ["zepp-a"]
+    assert second == ["zepp-b"]
+    assert after == "zepp-a"
+    assert next_after is None
 
 
 async def test_wearable_import_idempotency_update_and_tombstone(
@@ -113,6 +159,17 @@ async def test_wearable_import_idempotency_update_and_tombstone(
     )
     updated = await process_wearable_import(db_session, user_id=user_id, request=newer)
     assert updated.records_updated == 1
+    await db_session.commit()
+
+    same_content_new_export = _steps_request(
+        sync_id=str(uuid4()),
+        count=150,
+        modified_at=modified + timedelta(minutes=2),
+    )
+    unchanged = await process_wearable_import(
+        db_session, user_id=user_id, request=same_content_new_export
+    )
+    assert unchanged.records_unchanged == 1
     await db_session.commit()
 
     latest = await read_latest_wearable_observations(
@@ -279,6 +336,13 @@ def test_wearable_import_accepts_gadgetbridge_source() -> None:
         request.records[0].source_package
         == "nodomain.freeyourgadget.gadgetbridge"
     )
+    with pytest.raises(ValidationError, match="Gadgetbridge imports lack verified"):
+        WearableImportRequest.model_validate(
+            {
+                **request.model_dump(mode="json"),
+                "health_context_complete": True,
+            }
+        )
 
 
 def test_wearable_import_declares_one_record_type_and_heart_context() -> None:

@@ -860,15 +860,15 @@ def test_wearable_tool_defaults_missing_record_types_to_every_type() -> None:
     """
 
     now = datetime.now(timezone.utc)
-    window = {"start": now - timedelta(days=1), "end": now}
+    start = now - timedelta(days=1)
 
-    summary_request = WearableReadRequest(view="daily_summary", **window)
+    summary_request = WearableReadRequest(view="daily_summary", start=start, end=now)
     assert summary_request.record_types is None
     assert wearable_tools.requested_record_types(summary_request) == list(
         WearableRecordType
     )
 
-    range_request = WearableReadRequest(view="range", limit=50, **window)
+    range_request = WearableReadRequest(view="range", limit=50, start=start, end=now)
     assert wearable_tools.requested_record_types(range_request) == list(
         WearableRecordType
     )
@@ -876,7 +876,8 @@ def test_wearable_tool_defaults_missing_record_types_to_every_type() -> None:
     explicit_request = WearableReadRequest(
         view="daily_summary",
         record_types=[WearableRecordType.SLEEP],
-        **window,
+        start=start,
+        end=now,
     )
     assert wearable_tools.requested_record_types(explicit_request) == [
         WearableRecordType.SLEEP

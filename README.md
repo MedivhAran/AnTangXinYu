@@ -7,7 +7,7 @@
 先准备 **Git 和 Node.js 24**。Windows 开发使用 WSL Ubuntu，项目和命令都放在 Ubuntu 内；不要混用 Windows 的 Node 或 Python。
 
 ```bash
-git clone https://gitee.com/medivharan/antang.git AnTang
+git clone https://github.com/MedivhAran/AnTangXinYu.git AnTang
 cd AnTang/apps/mobile
 npm ci
 cp .env.example .env
@@ -30,7 +30,7 @@ npm run dev
 | 改了哪里 | 命令 | 需要准备 |
 | --- | --- | --- |
 | 手机端 | `bash scripts/check mobile` | Node.js 24 |
-| 后端 | `bash scripts/check api` | uv、Python 3.12、Docker Compose |
+| 后端 | `bash scripts/check api` | uv、Python 3.12、独立测试 PostgreSQL（本地 Docker 或 `ANTANG_CHECK_DATABASE_URL`） |
 | 两边都有 | `bash scripts/check all` | 上面两套环境 |
 
 脚本安装锁定依赖，再执行检查和测试。后端自动检查使用临时数据库，不需要模型密钥，不会连接团队的业务数据库。
@@ -43,13 +43,10 @@ PR 写清楚“解决什么问题、怎么验证、有没有迁移或配置变�
 
 ## 安装包与维护
 
-- **[开发包](https://expo.dev/accounts/wocky528/projects/antang/builds/788bdfc9-4753-48d4-b28f-62283a337922)**：开发者安装，连接自己电脑上的开发服务；本地 `.env` 使用服务器 API 地址。
-- **[预览包构建页](https://expo.dev/accounts/wocky528/projects/antang/builds/bc5a1e32-ac6f-4733-b4eb-72164894f939)**：构建状态为 `FINISHED` 后可下载安装，包内连接服务器 API，不需要电脑持续运行。
-- 安装包在 [Expo 项目构建页](https://expo.dev/accounts/wocky528/projects/antang/builds) 获取，部分操作需要项目成员权限。
+- **开发包**连接开发电脑上的 Metro；**预览包**独立运行并连接构建时配置的后端。
+- 安装包在 [Expo 项目构建页](https://expo.dev/accounts/wocky528/projects/antang/builds) 获取。分发前核对构建状态为 `FINISHED`、提交编号、API 地址及 Android 签名。
 
-开发包对应提交 `69bbf61`；新预览包对应提交 `2bdfa77`。原 2026-09-06 的预览包仍指向旧 API 地址，不再作为联调安装包。安装前核对构建页的完成状态和提交编号。
-
-[维护说明](docs/maintainers.md) 包含 Gitee 流水线、云构建和测试环境。
+[维护说明](docs/maintainers.md) 包含 GitHub 检查、云构建和服务器发布步骤。
 
 ## 目录
 
@@ -58,6 +55,6 @@ PR 写清楚“解决什么问题、怎么验证、有没有迁移或配置变�
 | `apps/mobile/` | Android App 与移动端测试 |
 | `api/` | 后端、数据库迁移与后端测试 |
 | `scripts/` | 团队共用的检查和出包入口 |
-| `.workflow/` | Gitee 自动检查配置 |
+| `.github/workflows/` | GitHub 自动检查配置 |
 | `docs/` | 开发与维护说明 |
 | `AGENTS.md` | 已确认的产品范围和项目约定 |

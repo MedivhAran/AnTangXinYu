@@ -63,6 +63,7 @@ export async function runBackgroundHealthSync(): Promise<'skipped' | 'synced'> {
       undefined,
       new Date(),
       sessionSignal,
+      false,
     );
     await secureHealthConnectTokenStore.recordBackgroundSuccess(
       userId,

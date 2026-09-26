@@ -28,7 +28,7 @@ export const IMPORT_BATCH_SIZE = 1000;
  *
  * 后端 api/src/antang_api/schemas/health_profile.py 只接受这两个包名，其余来源
  * 一律拒绝——目的是避免把手机或其他 App 的累计步数、距离重复累加。
- * 两者读的是同一只手环的本机记录，所以心率规则对它们一视同仁。
+ * 两种来源可能对应不同手环，后端按来源分别计算心率窗口。
  *
  * 本项目实际可用的通道是 Gadgetbridge：华为机型没有 Health Connect 通路，
  * 走不通 Zepp，所以如实标注 Gadgetbridge 包名。
@@ -90,9 +90,8 @@ function base(
             // 不猜 Health Connect 的 device_type 枚举，留空由后端按 null 处理
             device_type: null,
           },
-    // Gadgetbridge 的分钟数据不会回溯修改，用区间终点做"最后修改时间"，
-    // 重复导入同一份文件会得到 records_unchanged 而不是重复记录。
-    source_last_modified_at: endTime,
+    // 设备记录本身没有修改时间；用导出文件版本判断历史更正。
+    source_last_modified_at: bundle.exportModifiedAt,
   };
 }
 

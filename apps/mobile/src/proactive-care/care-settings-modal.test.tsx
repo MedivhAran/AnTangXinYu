@@ -290,7 +290,7 @@ describe('CareSettingsModal', () => {
     act(() => tree!.unmount());
   });
 
-  test('does not claim an expired changes cursor can be repaired by manual sync', async () => {
+  test('explains how foreground history recovery restores an expired cursor', async () => {
     const api = {
       getProactiveCareSettings: jest.fn().mockResolvedValue(settings),
       putProactiveCareSettings: jest.fn(),
@@ -321,7 +321,7 @@ describe('CareSettingsModal', () => {
     expect(
       tree!.root.findByProps({
         children:
-          '后台同步状态已经失效。为避免遗漏数据，当前版本会停止继续读取。',
+          '后台同步游标已失效。打开聊天页并授权读取历史健康数据，核对完成后会恢复后台检查。',
       }),
     ).toBeTruthy();
     expect(

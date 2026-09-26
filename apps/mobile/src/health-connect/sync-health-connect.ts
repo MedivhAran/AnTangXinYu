@@ -20,7 +20,7 @@ export class HealthConnectTokenExpiredError extends Error {
     super(
       initial
         ? `Health Connect ${recordType} 初始游标已失效`
-        : `Health Connect ${recordType} 变更游标已失效，当前版本不能安全重建这段历史数据`,
+        : `Health Connect ${recordType} 变更游标已失效，需要在前台核对历史数据`,
     );
     this.name = 'HealthConnectTokenExpiredError';
   }
@@ -35,6 +35,11 @@ export interface WearableImporter {
     deletedRecordIds: string[],
     signal?: AbortSignal,
   ): Promise<unknown>;
+  listHealthConnectRecordIds(
+    recordType: WearableRecord['record_type'],
+    after?: string,
+    signal?: AbortSignal,
+  ): Promise<{ ids: string[]; nextAfter: string | null }>;
 }
 
 type HealthConnectSyncProgress = {
@@ -289,6 +294,123 @@ async function incrementalSyncType(
   }
 }
 
+async function loadServerRecordIds(
+  importer: WearableImporter,
+  recordType: SupportedHealthConnectRecordType,
+  signal?: AbortSignal,
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let after: string | undefined;
+  while (true) {
+    throwIfCancelled(signal);
+    const page = await importer.listHealthConnectRecordIds(
+      wearableRecordType[recordType], after, signal,
+    );
+    throwIfCancelled(signal);
+    for (const id of page.ids) ids.add(id);
+    if (page.nextAfter === null) return ids;
+    if (page.ids.length === 0 || page.nextAfter === after) {
+      throw new Error(`服务器 ${recordType} 返回了重复的历史记录分页游标`);
+    }
+    after = page.nextAfter;
+  }
+}
+
+async function recoverExpiredType(
+  userId: string,
+  recordType: SupportedHealthConnectRecordType,
+  gateway: HealthConnectGateway,
+  tokenStore: HealthConnectTokenStore,
+  importer: WearableImporter,
+  healthContextComplete: boolean,
+  now: Date,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!(await gateway.requestHistoryReadPermission())) {
+    throw new Error(`请在 Health Connect 授权读取历史健康数据，以恢复${recordType}同步`);
+  }
+  throwIfCancelled(signal);
+  const serverIds = await loadServerRecordIds(importer, recordType, signal);
+
+  // Reserve a new cursor before reading. Apply its changes after the full
+  // snapshot so records changed during pagination are not lost.
+  let response = await gateway.getChanges(recordType);
+  throwIfCancelled(signal);
+  if (response.changesTokenExpired) {
+    throw new HealthConnectTokenExpiredError(recordType, true);
+  }
+
+  let snapshotRecordCount = 0;
+  let pageToken: string | undefined;
+  do {
+    throwIfCancelled(signal);
+    const page = await gateway.readRecords(
+      recordType,
+      new Date(0).toISOString(),
+      now.toISOString(),
+      pageToken,
+    );
+    throwIfCancelled(signal);
+    const records = new Map<string, WearableRecord>();
+    for (const value of page.records) {
+      const record = normalizeHealthConnectRecord(recordType, value);
+      mergeNewestRecord(records, record);
+      serverIds.delete(record.external_record_id);
+    }
+    snapshotRecordCount += records.size;
+    if (records.size > 0) {
+      await importInBatches(
+        importer, recordType, healthContextComplete, [...records.values()], [], signal,
+      );
+    }
+    if (page.pageToken !== undefined && page.pageToken === pageToken) {
+      throw new Error(`Health Connect ${recordType} 返回了重复分页游标`);
+    }
+    pageToken = page.pageToken;
+  } while (pageToken !== undefined);
+
+  // A completely empty result with previously stored records could mean the
+  // source app or its Health Connect data disappeared. Keep server data intact.
+  if (snapshotRecordCount === 0 && serverIds.size > 0) {
+    throw new Error(`Health Connect 未返回任何${recordType}历史记录，已保留服务器原始数据`);
+  }
+
+  let fetchedAfterRead = false;
+  while (true) {
+    const changes = normalizeChanges(
+      recordType, response.upsertionChanges, response.deletionChanges,
+    );
+    if (changes.records.length > 0 || changes.deletedRecordIds.length > 0) {
+      await importInBatches(
+        importer, recordType, healthContextComplete,
+        changes.records, changes.deletedRecordIds, signal,
+      );
+      for (const record of changes.records) serverIds.delete(record.external_record_id);
+      for (const id of changes.deletedRecordIds) serverIds.delete(id);
+    }
+    if (!response.hasMore && fetchedAfterRead) break;
+    const previousToken = response.nextChangesToken;
+    throwIfCancelled(signal);
+    response = await gateway.getChanges(recordType, previousToken);
+    throwIfCancelled(signal);
+    fetchedAfterRead = true;
+    if (response.changesTokenExpired) {
+      throw new HealthConnectTokenExpiredError(recordType, true);
+    }
+    if (response.nextChangesToken === previousToken && response.hasMore) {
+      throw new Error(`Health Connect ${recordType} 返回了重复变更游标`);
+    }
+  }
+
+  if (serverIds.size > 0) {
+    await importInBatches(
+      importer, recordType, healthContextComplete, [], [...serverIds], signal,
+    );
+  }
+  throwIfCancelled(signal);
+  await tokenStore.saveToken(userId, recordType, response.nextChangesToken);
+}
+
 /** Syncs each record type independently. Failures are surfaced and never retried here. */
 export async function syncHealthConnect(
   userId: string,
@@ -298,6 +420,7 @@ export async function syncHealthConnect(
   onProgress?: (progress: HealthConnectSyncProgress) => void,
   now = new Date(),
   signal?: AbortSignal,
+  recoverExpired = true,
 ): Promise<void> {
   const tokens = await tokenStore.loadTokens(userId);
   const completedContextTypes = new Set<SupportedHealthConnectRecordType>();
@@ -326,16 +449,20 @@ export async function syncHealthConnect(
         signal,
       );
     } else {
-      await incrementalSyncType(
-        userId,
-        recordType,
-        token,
-        gateway,
-        tokenStore,
-        importer,
-        healthContextComplete,
-        signal,
-      );
+      try {
+        await incrementalSyncType(
+          userId, recordType, token, gateway, tokenStore,
+          importer, healthContextComplete, signal,
+        );
+      } catch (error) {
+        if (!(error instanceof HealthConnectTokenExpiredError) || !recoverExpired) {
+          throw error;
+        }
+        await recoverExpiredType(
+          userId, recordType, gateway, tokenStore, importer,
+          healthContextComplete, now, signal,
+        );
+      }
     }
     completedContextTypes.add(recordType);
   }
@@ -354,6 +481,7 @@ export function runHealthConnectSync(
   onProgress?: (progress: HealthConnectSyncProgress) => void,
   now = new Date(),
   signal?: AbortSignal,
+  recoverExpired = true,
 ): Promise<void> {
   if (activeSync !== null) {
     if (activeSync.userId !== userId) {
@@ -371,6 +499,7 @@ export function runHealthConnectSync(
     onProgress,
     now,
     signal,
+    recoverExpired,
   ).finally(() => {
     if (activeSync?.promise === request) activeSync = null;
   });

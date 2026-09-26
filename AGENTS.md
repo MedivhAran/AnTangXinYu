@@ -56,6 +56,7 @@
 - 健康档案是权威记录，使用 PostgreSQL 持久化。
 - 健康档案是用户全部长期健康数据的总称，包含设备产生的时序观测、由确定性程序计算且可复现的统计结果，以及经过管理的长期档案结论。
 - 首个可穿戴设备目标是 Amazfit Active 2。当前模块不要求覆盖没有 Google Play 服务的 Android 手机。
+- 华为 Band 9 可通过 Gadgetbridge 导出的数据库手动导入，作为独立于 Zepp/Health Connect 的来源；当前解析只接受单一华为设备与用户的导出，压力和热量只在本次导入预览中展示。两种来源的心率与活动上下文分别计算，Gadgetbridge 导入不满足主动心率关怀的完整上下文门槛。
 - Active 2 真机已经确认 Zepp 会向 Health Connect 写入步数、锻炼、距离、爬升高度、体重、呼吸频率、静息心率、分钟级心率、带阶段的睡眠和血氧饱和度。Expo 57 的权限、原生调用、手动及回到前台同步已经通过真机验收；可选的十五分钟 Android 后台周期同步代码已接通，仍需 development build 真机验证系统调度。
 - 首版先覆盖 Active 2 实际能够稳定提供且对糖尿病管理有价值的时序数据，其他健康档案内容在相应模块调研后设计。
 - 健康档案管理 Sub-agent 识别健康档案候选变更；应用程序负责验证、授权、写入和审计。陪伴记忆是另一条流程，不参与权威健康档案写入。
@@ -131,8 +132,8 @@
 - Codex 桌面端保留当前任务和完整对话；所有项目命令通过 `wsl.exe -d Ubuntu -- bash -lc` 进入 Ubuntu 执行。
 - Python、`uv`、Alembic、Node.js、npm、Expo、Git 和 Docker 命令均在 Ubuntu 内运行。
 - 后端完整测试从项目根目录运行 `./api/scripts/test`；它使用迁移到最新版本的临时 PostgreSQL 数据库并在结束后删除，禁止让全量 `pytest` 直接连接开发数据库。
-- 协作检查入口为 `bash scripts/check mobile|api|all`。本地通过 `scripts/test-api` 启动临时 PostgreSQL 容器；Gitee 通过 `scripts/check-api-gitee` 在临时执行机内启动 PostgreSQL，并按锁文件版本和哈希安装依赖。两者共用检查与 `api/scripts/test` 的临时建库流程，无需开发数据库或真实模型凭据。
-- README 负责新人入口，`docs/development.md` 负责开发步骤，`docs/maintainers.md` 负责账号、流水线、出包与部署。`docs/` 纳入版本管理。Gitee 自动检查不携带业务或构建密钥，EAS 出包由维护者在可信提交上触发。
+- 协作检查入口为 `bash scripts/check mobile|api|all`。后端检查连接独立的测试 PostgreSQL；本地 Docker 可通过 `scripts/test-api` 临时启动，也可用 `ANTANG_CHECK_DATABASE_URL` 指向隔离的测试实例。GitHub Actions 使用独立 PostgreSQL 服务。两者共用 `api/scripts/test` 的临时建库、迁移与清理流程，不连接业务数据库或使用真实模型凭据。
+- README 负责新人入口，`docs/development.md` 负责开发步骤，`docs/maintainers.md` 负责账号、GitHub 检查、出包与部署。`docs/` 纳入版本管理。GitHub 自动检查不携带业务或构建密钥，EAS 出包由维护者在可信提交上触发。
 - Windows 负责承载 Codex 界面和调用 `wsl.exe`，不得直接运行项目虚拟环境或 `node_modules` 中的程序。
 - 文件链接和工具工作区可以使用 `\\wsl.localhost\Ubuntu\home\medivh\AnTang`，代码与脚本中的项目路径使用 Linux 路径。
 
@@ -156,6 +157,7 @@
 - Android 已有登录、连续聊天、侧边栏、健康档案和主动关怀设置页面；聊天页的拍照、相册图片和 PDF 报告会上传并交给同一个多模态 Core Agent 解读。独立“今日”入口已经从当前导航删除，仍保留但未接入的演示组件不能算作已实现页面，手环区域只读服务器真实历史记录。
 - Core Agent 已接入 Tavily 搜索与网页读取，工具调用和联网来源可审计，Android 显示安全活动阶段、正文引用和来源卡片；已知评测问题记录在 `docs/research/web-search-evaluation.md`。
 - 健康档案管理 Sub-agent、可直接选择和输入的确认/补充卡、档案页面手动维护、手环观测与只读查询已经接通。Android 已完成 Zepp 来源限定的十类 Health Connect 数据同步，权限、原生调用和真实读数已通过真机验收。
+- Health Connect 变更游标过期时，前台申请历史读取权限，按当前用户和 Zepp 来源核对服务器记录 ID；完整读取、变更补齐及服务器导入成功后才提交缺失记录的删除和新游标。后台任务将过期状态交给前台处理。恢复流程的真机验收仍需完成。
 - Hindsight 陪伴记忆的 Docker、同步分段、用户游标、在线 retain/recall 和主动关怀召回已经接通并启用。基础中文冒烟和覆盖短回复、纠正/否定、助手猜测、幂等、多用户隔离与主动召回的真实语义回归已通过；临时 bank 在 Hindsight API 与数据库重启后的召回也已通过。Observation 后台任务恢复、延迟、内存和数据增长仍需持续观察。
 - 主动关怀代码链路已接通：独立 Worker、持久任务与租约、主动 Agent、Auditor、Hindsight、日常/提醒/计划设置、计划工具、Expo Push、通知点击合并和 Android 后台 Health Connect。日常问候受免打扰、最近用户聊天和近 24 小时主动消息保护；用户明确要求的一次性提醒和计划回访不被这个 24 小时保护阻挡。三者通过程序门槛后都必须起草。Firebase Android 配置和 EAS FCM v1 凭据已完成，Android 真机 Token 登记以及 App 后台的 Expo/FCM 通道测试通知已经通过。真实 Agent 主动消息的完整投递、通知点击、前台与冷启动行为以及后台 Health Connect 仍需真机验收。
 - `heart-rate-shadow-v0` 已实现成人 Zepp 自动心率的持续窗口、活动/睡眠排除、新鲜度、相邻 episode 合并和未发送任务的更新/删除回算。未命中、被阻断和重复窗口只保存可复核证据；阻断解除后复用原任务重新排队，已经发送的证据保持不变。首个有效候选会进入 Agent、程序锁定事实、Auditor、聊天消息和推送链路。规则版本号为保持历史回放可比较而保留，不再表示只读评测。产品不提供演示按钮、模拟开关或用户可见测试入口。首轮真实历史样本回放候选为 0；真实新鲜心率的端到端行为要在手环恢复后复验。
@@ -170,7 +172,7 @@
 - 历史原始消息的按需检索方案。
 - LightRAG PostgreSQL 后台的检索效果与 Apache AGE 性能。
 - Hindsight 对陪伴记忆提取、更新、遗忘和召回的效果。
-- Amazfit Active 2 经 Health Connect 的同步延迟、设备元数据、权限撤销行为和失效 Changes Token 的完整历史重建，以及是否需要 Zepp OS 小程序补充关键数据。
+- Amazfit Active 2 经 Health Connect 的同步延迟、设备元数据、权限撤销行为、过期游标恢复的真机验收、跨手机同账号的数据来源隔离，以及是否需要 Zepp OS 小程序补充关键数据。
 - 三类长期档案的专业内容和产品交互。
 - Android 发布方式。
 
@@ -182,6 +184,8 @@
 - `docs/research/agent-activity-streaming.md`：Agent 活动事件与 App 渐变状态栏的调研和决定。
 - `docs/research/web-search-evaluation.md`：Tavily 工具、引用链路和首轮真实评测记录。
 - `docs/research/amazfit-integration.md`：旧 Amazfit 原型、Zepp 官方能力、Health Connect、Google Health API 和替代路线调研。
+- `docs/research/health-connect-cursor-recovery.md`：变更游标失效后的历史读取、服务器核对、删除边界和失败语义。
+- `docs/research/gadgetbridge-huawei-import.md`：华为 Band 9 导出库的手动导入口径、来源隔离和真机验收边界。
 - `docs/research/health-profile-manager-design.md`：健康档案管理 Sub-agent、确认规则、上下文边界和手环只读权限的设计决定。
 - `docs/research/hindsight-integration.md`：Hindsight 运行链路、对话分段、故障语义、隐私边界和影子验收。
 - `docs/research/hindsight-deployment.md`：Hindsight 独立 Docker、PostgreSQL、中文检索模型和部署验收。

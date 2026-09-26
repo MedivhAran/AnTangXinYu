@@ -75,7 +75,7 @@ export function AppMenu({
     (gadgetbridgeLastSyncedAt === null
       ? gadgetbridgeConnected
         ? '手环数据已就绪'
-        : '点击连接，从 Gadgetbridge 导入数据'
+        : '选择华为手环的 Gadgetbridge 导出文件'
       : `上次同步 ${formatLastSync(gadgetbridgeLastSyncedAt)}`);
 
   return (
@@ -139,7 +139,7 @@ export function AppMenu({
 
           {/* ===== 新增：健康看板入口 ===== */}
           <Pressable
-            accessibilityLabel="健康看板"
+            accessibilityLabel="本次导入预览"
             accessibilityRole="button"
             onPress={onOpenDashboard}
             style={({ pressed }) => [
@@ -151,15 +151,15 @@ export function AppMenu({
               <AppIcon color={colors.primaryPressed} icon={ChartLineData01Icon} size={26} />
             </View>
             <View style={styles.healthCopy}>
-              <Text style={styles.healthTitle}>健康看板</Text>
-              <Text style={styles.healthHint}>心率、步数、血氧、睡眠趋势</Text>
+              <Text style={styles.healthTitle}>本次导入预览</Text>
+              <Text style={styles.healthHint}>查看最近选取文件的心率、睡眠等数据</Text>
             </View>
             <AppIcon color={colors.muted} icon={ArrowRight01Icon} size={20} />
           </Pressable>
 
           {/* ===== 新增：Gadgetbridge 独立入口 ===== */}
           <Pressable
-            accessibilityLabel="Gadgetbridge 手环同步"
+            accessibilityLabel="华为手环导入"
             accessibilityRole="button"
             disabled={gadgetbridgeBusy}
             onPress={gadgetbridgeConnected ? onGadgetbridgeSync : onGadgetbridgeConnect}
@@ -174,7 +174,7 @@ export function AppMenu({
             </View>
             <View style={styles.gadgetbridgeCopy}>
               <View style={styles.gadgetbridgeTitleRow}>
-                <Text style={styles.gadgetbridgeTitle}>Gadgetbridge 手环</Text>
+                <Text style={styles.gadgetbridgeTitle}>华为手环导入</Text>
                 {gadgetbridgeConnected ? (
                   <View style={styles.connectedBadge}>
                     <Text style={styles.connectedBadgeText}>已连接</Text>

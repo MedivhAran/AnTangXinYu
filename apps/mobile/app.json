@@ -26,6 +26,7 @@
         "android.permission.health.READ_SLEEP",
         "android.permission.health.READ_OXYGEN_SATURATION",
         "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+        "android.permission.health.READ_HEALTH_DATA_HISTORY",
         "android.permission.CAMERA"
       ],
       "adaptiveIcon": {

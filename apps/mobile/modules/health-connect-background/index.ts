@@ -1,1 +1,5 @@
-export { isBackgroundReadAvailable } from './src/HealthConnectBackgroundModule';
+export {
+  isBackgroundReadAvailable,
+  isHistoryReadAvailable,
+  hasHistoryReadPermission,
+} from './src/HealthConnectBackgroundModule';

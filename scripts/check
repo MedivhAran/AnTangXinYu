@@ -19,7 +19,7 @@ check_mobile() {
 
 check_api() {
     cd "$project_dir"
-    # Gitee 已按锁文件版本与哈希从镜像安装依赖；复用后面的全部检查。
+    # --no-sync 供已按锁文件安装依赖的检查环境使用。
     if [[ "${1:-}" != --no-sync ]]; then
         uv sync --project api --frozen
     fi

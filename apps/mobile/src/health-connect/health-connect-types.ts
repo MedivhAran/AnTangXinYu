@@ -37,6 +37,7 @@ export interface HealthConnectGateway {
   initialize(): Promise<boolean>;
   requestReadPermissions(): Promise<Permission[]>;
   getGrantedPermissions(): Promise<Permission[]>;
+  requestHistoryReadPermission(): Promise<boolean>;
   readRecords(
     recordType: SupportedHealthConnectRecordType,
     startTime: string,

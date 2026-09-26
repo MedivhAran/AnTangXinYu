@@ -152,11 +152,8 @@ class WearableRecordBase(StrictApiModel):
     end_time: datetime
     start_zone_offset_seconds: Annotated[int, Field(ge=-64800, le=64800)] | None = None
     end_zone_offset_seconds: Annotated[int, Field(ge=-64800, le=64800)] | None = None
-    # 允许的来源是同一只华为手环的两个读取通道：
-    #   1. Google Play 版 Zepp 经 Health Connect 写入。
-    #   2. Gadgetbridge 直读手环数据库后手动导出（华为机型没有 Health Connect 通路）。
-    # 其余来源仍然拒绝，避免把手机或其他 App 的累计步数、距离再次相加。
-    # 心率规则对这两个通道一视同仁：两者写入的都是手环本机记录。
+    # Zepp/Health Connect 与 Gadgetbridge 手动导入可能来自不同设备。
+    # 限定来源，避免将手机或其他 App 的累计数据再次相加。
     source_package: Literal[
         "com.huami.watch.hmwatchmanager",
         "nodomain.freeyourgadget.gadgetbridge",
@@ -271,6 +268,9 @@ class WearableImportRequest(StrictApiModel):
     def validate_record_ids(self) -> "WearableImportRequest":
         if any(record.record_type != self.record_type for record in self.records):
             raise ValueError("every record must match request record_type")
+        sources = {record.source_package for record in self.records}
+        if len(sources) > 1:
+            raise ValueError("a wearable import cannot mix data sources")
         if (
             self.health_context_complete
             and self.record_type is not WearableRecordType.HEART_RATE
@@ -278,6 +278,11 @@ class WearableImportRequest(StrictApiModel):
             raise ValueError(
                 "health_context_complete is only valid for heart_rate imports"
             )
+        if (
+            self.health_context_complete
+            and "nodomain.freeyourgadget.gadgetbridge" in sources
+        ):
+            raise ValueError("Gadgetbridge imports lack verified exercise context")
         record_ids = [record.external_record_id for record in self.records]
         if len(record_ids) != len(set(record_ids)):
             raise ValueError("records contain duplicate external_record_id")
@@ -295,6 +300,11 @@ class WearableImportResponse(BaseModel):
     records_updated: int
     records_unchanged: int
     records_deleted: int
+
+
+class HealthConnectRecordIdsResponse(BaseModel):
+    ids: list[str]
+    next_after: str | None
 
 
 class WearableLatestResponse(BaseModel):

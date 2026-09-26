@@ -1,4 +1,3 @@
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
@@ -1638,14 +1637,18 @@ async def test_task_that_expires_during_drafting_never_creates_a_message(
             kind=ProactiveCareTaskKind.ROUTINE_CHECK_IN,
             status=ProactiveCareTaskStatus.SCHEDULED,
             due_at=now - timedelta(seconds=1),
-            expires_at=now + timedelta(milliseconds=100),
+            expires_at=now + timedelta(minutes=1),
         )
         session.add(task)
         await session.commit()
         task_id = task.id
 
     async def cross_expiry() -> None:
-        await asyncio.sleep(0.2)
+        async with session_factory() as session:
+            expiring_task = await session.get(ProactiveCareTask, task_id)
+            assert expiring_task is not None
+            expiring_task.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            await session.commit()
 
     processor = ProactiveCareProcessor(
         agent=cast(

@@ -66,7 +66,7 @@ describe('syncHealthConnect', () => {
       loadTokens,
       saveToken: jest.fn(),
     } as unknown as HealthConnectTokenStore;
-    const importer = { importWearableRecords: jest.fn() };
+    const importer = { importWearableRecords: jest.fn(), listHealthConnectRecordIds: jest.fn() };
 
     const foreground = runHealthConnectSync(
       '019b1111-1111-7111-8111-111111111111',
@@ -105,7 +105,7 @@ describe('syncHealthConnect', () => {
         hasMore: false,
       })),
     } as unknown as HealthConnectGateway;
-    const importer = { importWearableRecords: jest.fn() };
+    const importer = { importWearableRecords: jest.fn(), listHealthConnectRecordIds: jest.fn() };
 
     const first = runHealthConnectSync(
       '019b1111-1111-7111-8111-111111111111',
@@ -133,6 +133,7 @@ describe('syncHealthConnect', () => {
       getSdkStatus: jest.fn(),
       initialize: jest.fn(),
       requestReadPermissions: jest.fn(),
+      requestHistoryReadPermission: jest.fn(),
       getGrantedPermissions: jest.fn(),
       async readRecords(recordType, startTime, endTime) {
         expect(recordType).toBe('Steps');
@@ -198,6 +199,7 @@ describe('syncHealthConnect', () => {
     };
     const imports: Parameters<WearableImporter['importWearableRecords']>[] = [];
     const importer: WearableImporter = {
+      listHealthConnectRecordIds: jest.fn(),
       async importWearableRecords(...args) {
         imports.push(args);
         events.push(`import:${args[3][0]?.record_type ?? args[1]}`);
@@ -270,7 +272,7 @@ describe('syncHealthConnect', () => {
         '019b1111-1111-7111-8111-111111111111',
         gateway,
         tokenStore,
-        { importWearableRecords },
+        { importWearableRecords, listHealthConnectRecordIds: jest.fn() },
       ),
     ).rejects.toThrow('server rejected import');
     expect(getChanges).toHaveBeenCalledTimes(1);
@@ -278,34 +280,145 @@ describe('syncHealthConnect', () => {
     expect(saveToken).not.toHaveBeenCalled();
   });
 
-  test('surfaces an expired token without clearing data or starting a new baseline', async () => {
+  test('recovers an expired ExerciseSession cursor from full history before deleting missing records', async () => {
     const tokens = allTokensExcept();
-    const getChanges = jest.fn(async () => ({
-      upsertionChanges: [],
-      deletionChanges: [],
-      nextChangesToken: 'expired-token',
-      changesTokenExpired: true,
-      hasMore: false,
-    }));
-    const gateway = { getChanges } as unknown as HealthConnectGateway;
-    const saveToken = jest.fn();
+    const events: string[] = [];
+    let exerciseCalls = 0;
+    const gateway = {
+      async getChanges(recordType: SupportedHealthConnectRecordType, token?: string) {
+        if (recordType === 'ExerciseSession') {
+          exerciseCalls += 1;
+          if (exerciseCalls === 1) {
+            expect(token).toBe('ExerciseSession-token');
+            return {
+              upsertionChanges: [], deletionChanges: [], nextChangesToken: 'expired-token',
+              changesTokenExpired: true, hasMore: false,
+            };
+          }
+          if (exerciseCalls === 2) expect(token).toBeUndefined();
+          if (exerciseCalls === 3) expect(token).toBe('exercise-baseline');
+          return {
+            upsertionChanges: [], deletionChanges: [],
+            nextChangesToken: exerciseCalls === 2 ? 'exercise-baseline' : 'exercise-final',
+            changesTokenExpired: false, hasMore: false,
+          };
+        }
+        return {
+          upsertionChanges: [], deletionChanges: [], nextChangesToken: `${recordType}-next`,
+          changesTokenExpired: false, hasMore: false,
+        };
+      },
+      requestHistoryReadPermission: jest.fn(async () => true),
+      readRecords: jest.fn(async (recordType: SupportedHealthConnectRecordType) => {
+        expect(recordType).toBe('ExerciseSession');
+        events.push('read-history');
+        return {
+          records: [{
+            startTime: '2026-07-14T10:00:00Z',
+            endTime: '2026-07-14T11:00:00Z',
+            exerciseType: 79,
+            metadata: metadata('exercise-present', '2026-07-14T11:01:00Z'),
+          }],
+        };
+      }),
+    } as unknown as HealthConnectGateway;
     const tokenStore = {
       loadTokens: jest.fn(async () => tokens),
-      saveToken,
+      saveToken: jest.fn(async (_userId: string, recordType: string, token: string) => {
+        events.push(`save:${recordType}:${token}`);
+      }),
     } as unknown as HealthConnectTokenStore;
-    const importWearableRecords = jest.fn();
+    const importer = {
+      listHealthConnectRecordIds: jest.fn(async () => ({
+        ids: ['exercise-present', 'exercise-deleted'], nextAfter: null,
+      })),
+      importWearableRecords: jest.fn(async (
+        _syncId: string, recordType: string, _complete: boolean,
+        records: { external_record_id: string }[], deletedIds: string[],
+      ) => {
+        if (recordType === 'exercise') {
+          events.push(`import:${records.map((item) => item.external_record_id).join(',')}:${deletedIds.join(',')}`);
+        }
+      }),
+    };
 
-    await expect(
-      syncHealthConnect(
-        '019b1111-1111-7111-8111-111111111111',
-        gateway,
-        tokenStore,
-        { importWearableRecords },
-      ),
-    ).rejects.toThrow('当前版本不能安全重建');
-    expect(getChanges).toHaveBeenCalledTimes(1);
-    expect(importWearableRecords).not.toHaveBeenCalled();
-    expect(saveToken).not.toHaveBeenCalled();
+    await syncHealthConnect(
+      '019b1111-1111-7111-8111-111111111111',
+      gateway,
+      tokenStore,
+      importer,
+    );
+    expect(gateway.requestHistoryReadPermission).toHaveBeenCalledTimes(1);
+    expect(importer.listHealthConnectRecordIds).toHaveBeenCalledWith('exercise', undefined, undefined);
+    expect(events).toEqual(expect.arrayContaining([
+      'read-history',
+      'import:exercise-present:',
+      'import::exercise-deleted',
+      'save:ExerciseSession:exercise-final',
+    ]));
+    expect(events.indexOf('save:ExerciseSession:exercise-final')).toBeGreaterThan(
+      events.indexOf('import::exercise-deleted'),
+    );
+  });
+
+  test('keeps the expired cursor and server records when full history is empty', async () => {
+    const gateway = {
+      getChanges: jest.fn(async (recordType: SupportedHealthConnectRecordType, token?: string) => ({
+        upsertionChanges: [], deletionChanges: [],
+        nextChangesToken: `${recordType}-new`,
+        changesTokenExpired: recordType === 'ExerciseSession' && token === 'ExerciseSession-token',
+        hasMore: false,
+      })),
+      requestHistoryReadPermission: jest.fn(async () => true),
+      readRecords: jest.fn(async () => ({ records: [] })),
+    } as unknown as HealthConnectGateway;
+    const tokenStore = {
+      loadTokens: jest.fn(async () => allTokensExcept()),
+      saveToken: jest.fn(),
+    } as unknown as HealthConnectTokenStore;
+    const importer = {
+      importWearableRecords: jest.fn(),
+      listHealthConnectRecordIds: jest.fn(async () => ({
+        ids: ['existing-exercise'], nextAfter: null,
+      })),
+    };
+
+    await expect(syncHealthConnect(
+      '019b1111-1111-7111-8111-111111111111', gateway, tokenStore, importer,
+    )).rejects.toThrow('已保留服务器原始数据');
+    expect(tokenStore.saveToken).not.toHaveBeenCalledWith(
+      expect.anything(), 'ExerciseSession', expect.anything(),
+    );
+    expect(importer.importWearableRecords).not.toHaveBeenCalledWith(
+      expect.anything(), 'exercise', expect.anything(),
+      expect.anything(), expect.arrayContaining(['existing-exercise']), expect.anything(),
+    );
+  });
+
+  test('does not replace an expired cursor when history access is denied', async () => {
+    const gateway = {
+      getChanges: jest.fn(async (recordType: SupportedHealthConnectRecordType, token?: string) => ({
+        upsertionChanges: [], deletionChanges: [], nextChangesToken: 'expired',
+        changesTokenExpired: recordType === 'ExerciseSession' && token === 'ExerciseSession-token',
+        hasMore: false,
+      })),
+      requestHistoryReadPermission: jest.fn(async () => false),
+    } as unknown as HealthConnectGateway;
+    const tokenStore = {
+      loadTokens: jest.fn(async () => allTokensExcept()),
+      saveToken: jest.fn(),
+    } as unknown as HealthConnectTokenStore;
+    const importer = {
+      importWearableRecords: jest.fn(), listHealthConnectRecordIds: jest.fn(),
+    };
+
+    await expect(syncHealthConnect(
+      '019b1111-1111-7111-8111-111111111111', gateway, tokenStore, importer,
+    )).rejects.toThrow('请在 Health Connect 授权读取历史健康数据');
+    expect(importer.listHealthConnectRecordIds).not.toHaveBeenCalled();
+    expect(tokenStore.saveToken).not.toHaveBeenCalledWith(
+      expect.anything(), 'ExerciseSession', expect.anything(),
+    );
   });
 
   test('stops before upload when logout cancels an in-flight native read', async () => {
@@ -326,7 +439,7 @@ describe('syncHealthConnect', () => {
       loadTokens: jest.fn(async () => allTokensExcept()),
       saveToken: jest.fn(),
     } as unknown as HealthConnectTokenStore;
-    const importer = { importWearableRecords: jest.fn() };
+    const importer = { importWearableRecords: jest.fn(), listHealthConnectRecordIds: jest.fn() };
     const controller = new AbortController();
 
     const pending = syncHealthConnect(

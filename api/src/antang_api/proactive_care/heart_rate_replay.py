@@ -37,7 +37,6 @@ from antang_api.proactive_care.heart_rate_shadow import (
     _MAXIMUM_DELAY,
     _WINDOW_MINUTES,
     _evaluate_window,
-    _evaluated_source_package,
     _samples,
 )
 
@@ -59,6 +58,7 @@ async def _load_history(
     user_id: UUID,
     start: datetime,
     end: datetime,
+    source_package: str,
 ) -> ReplayHistory:
     profile = await session.get(PersonalProfile, user_id)
     if profile is None:
@@ -70,7 +70,7 @@ async def _load_history(
             select(WearableObservation).where(
                 WearableObservation.user_id == user_id,
                 WearableObservation.record_type == WearableRecordType.HEART_RATE,
-                WearableObservation.source_package.in_(SOURCE_PACKAGES),
+                WearableObservation.source_package == source_package,
                 WearableObservation.recording_method == _AUTOMATICALLY_RECORDED,
                 WearableObservation.deleted_at.is_(None),
                 WearableObservation.end_time >= history_start,
@@ -78,7 +78,6 @@ async def _load_history(
             )
         )
     )
-    source_package = _evaluated_source_package(heart_observations)
     context_observations = list(
         await session.scalars(
             select(WearableObservation).where(
@@ -90,6 +89,7 @@ async def _load_history(
                         WearableRecordType.STEPS,
                     }
                 ),
+                WearableObservation.source_package == source_package,
                 WearableObservation.deleted_at.is_(None),
                 WearableObservation.end_time
                 >= history_start - _EXERCISE_MARGIN,
@@ -219,6 +219,7 @@ async def replay_heart_rate_shadow(
     start_at: datetime,
     end_at: datetime,
     timezone_name: str,
+    source_package: str = SOURCE_PACKAGES[0],
     assume_adult: bool = False,
     assume_context_complete: bool = False,
 ) -> dict[str, Any]:
@@ -235,6 +236,8 @@ async def replay_heart_rate_shadow(
     end = end_at.astimezone(timezone.utc)
     if end <= start:
         raise ValueError("心率回放结束时间必须晚于开始时间")
+    if source_package not in SOURCE_PACKAGES:
+        raise ValueError("心率回放数据来源不受支持")
 
     (
         profile,
@@ -250,6 +253,7 @@ async def replay_heart_rate_shadow(
         user_id=user_id,
         start=start,
         end=end,
+        source_package=source_package,
     )
 
     snapshot_results: list[HeartRateShadowResult] = []
@@ -404,6 +408,7 @@ async def replay_heart_rate_shadow(
     return {
         "rule_id": HEART_RATE_RULE_ID,
         "rule_version": HEART_RATE_RULE_VERSION,
+        "source_package": source_package,
         "user_id": str(user_id),
         "start_at": start.isoformat(),
         "end_at": end.isoformat(),
@@ -426,6 +431,12 @@ def main() -> int:
     parser.add_argument("--start-at", required=True)
     parser.add_argument("--end-at", required=True)
     parser.add_argument("--timezone", required=True, dest="timezone_name")
+    parser.add_argument(
+        "--source-package",
+        choices=SOURCE_PACKAGES,
+        default=SOURCE_PACKAGES[0],
+        help="只重放一个数据来源；默认 Zepp。",
+    )
     parser.add_argument(
         "--assume-adult",
         action="store_true",
@@ -462,6 +473,7 @@ def main() -> int:
                     start_at=start_at,
                     end_at=end_at,
                     timezone_name=args.timezone_name,
+                    source_package=args.source_package,
                     assume_adult=args.assume_adult,
                     assume_context_complete=args.assume_context_complete,
                 )

@@ -62,7 +62,7 @@ const backgroundHealthLabels: Record<
   disabled: '后台检查尚未开启',
   enabled: '后台检查已开启，Android 会根据电量和系统状态安排运行。',
   needs_foreground:
-    '后台同步状态已经失效。为避免遗漏数据，当前版本会停止继续读取。',
+    '后台同步游标已失效。打开聊天页并授权读取历史健康数据，核对完成后会恢复后台检查。',
   unavailable: '这台设备暂不支持 Health Connect 后台读取。',
   permission_missing: '后台读取权限已经关闭，可以在下方停用已登记的检查。',
 };

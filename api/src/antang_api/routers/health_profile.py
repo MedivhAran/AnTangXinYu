@@ -26,6 +26,7 @@ from antang_api.health_profile.service import (
     profile_card_options,
 )
 from antang_api.health_profile.wearable_service import (
+    list_health_connect_record_ids,
     process_wearable_import,
     read_latest_wearable_observations,
     read_wearable_observations,
@@ -43,6 +44,7 @@ from antang_api.schemas.health_profile import (
     HealthProfileChangeRequest,
     HealthProfileChangeResponse,
     HealthProfileResponse,
+    HealthConnectRecordIdsResponse,
     HeartRateData,
     HeartRateTrendPointResponse,
     ProfileCardAnswerRequest,
@@ -345,3 +347,24 @@ async def import_wearable_records(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": error.code},
         ) from error
+
+
+@router.get(
+    "/wearable-health-connect-ids",
+    response_model=HealthConnectRecordIdsResponse,
+)
+async def get_health_connect_record_ids(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    record_type: WearableRecordType,
+    after: Annotated[str | None, Query(min_length=1, max_length=255)] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 1000,
+) -> HealthConnectRecordIdsResponse:
+    ids, next_after = await list_health_connect_record_ids(
+        session,
+        user_id=user.id,
+        record_type=record_type,
+        after=after,
+        limit=limit,
+    )
+    return HealthConnectRecordIdsResponse(ids=ids, next_after=next_after)

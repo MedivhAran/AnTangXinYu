@@ -4,6 +4,15 @@ import {
   getGrantedPermissions,
   requestPermission,
 } from 'react-native-health-connect';
+import {
+  hasHistoryReadPermission,
+  isHistoryReadAvailable,
+} from '../../modules/health-connect-background';
+
+jest.mock('../../modules/health-connect-background', () => ({
+  hasHistoryReadPermission: jest.fn(),
+  isHistoryReadAvailable: jest.fn(),
+}));
 
 const mockReadRecords = jest.fn(
   async (..._args: unknown[]): Promise<{
@@ -96,5 +105,18 @@ describe('nativeHealthConnect Zepp boundary', () => {
     expect(requestPermission).toHaveBeenCalledWith([
       { accessType: 'read', recordType: 'BackgroundAccessPermission' },
     ]);
+  });
+
+  test('verifies the history grant through the native module after requesting it', async () => {
+    jest.mocked(isHistoryReadAvailable).mockResolvedValue(true);
+    jest.mocked(hasHistoryReadPermission)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await expect(nativeHealthConnect.requestHistoryReadPermission()).resolves.toBe(true);
+    expect(requestPermission).toHaveBeenCalledWith([
+      { accessType: 'read', recordType: 'ReadHealthDataHistory' },
+    ]);
+    expect(hasHistoryReadPermission).toHaveBeenCalledTimes(2);
   });
 });

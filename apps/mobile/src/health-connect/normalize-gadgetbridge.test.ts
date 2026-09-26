@@ -46,6 +46,7 @@ function bundle(overrides: Partial<HealthBundle> = {}): HealthBundle {
     version: 2,
     bucketMinutes: 15,
     fileName: 'gadgetbridge.db',
+    exportModifiedAt: '2026-09-26T12:00:00.000Z',
     heartRates: [
       // 故意乱序，并让同一时间戳出现两次（真实库里 OTHER_TIMESTAMP 配对行就是这样）
       { timestamp: '2026-09-06T01:00:00.000Z', heartRate: 70 },
@@ -95,6 +96,7 @@ describe('normalizeGadgetbridgeBundle', () => {
       for (const record of group.records) {
         expect(Object.keys(record).sort()).toEqual(BASE_KEYS);
         expect(record.record_type).toBe(group.recordType);
+        expect(record.source_last_modified_at).toBe('2026-09-26T12:00:00.000Z');
       }
     }
   });

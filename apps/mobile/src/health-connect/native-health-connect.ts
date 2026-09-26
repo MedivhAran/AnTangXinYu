@@ -10,6 +10,11 @@ import {
 import { Platform } from 'react-native';
 
 import {
+  hasHistoryReadPermission,
+  isHistoryReadAvailable,
+} from '../../modules/health-connect-background';
+
+import {
   healthConnectReadPermissions,
   type HealthConnectGateway,
   type SupportedHealthConnectRecordType,
@@ -72,6 +77,19 @@ export const nativeHealthConnect: NativeHealthConnectGateway = {
 
   async getGrantedPermissions() {
     return (await getGrantedPermissions()) as Permission[];
+  },
+
+  async requestHistoryReadPermission() {
+    if (!(await isHistoryReadAvailable())) {
+      throw new Error('这台设备的 Health Connect 不支持读取完整历史数据');
+    }
+    if (await hasHistoryReadPermission()) return true;
+    await requestPermission([
+      { accessType: 'read', recordType: 'ReadHealthDataHistory' },
+    ]);
+    // react-native-health-connect 3.5.3 does not include this special grant in
+    // getGrantedPermissions(), so verify it through the small native module.
+    return hasHistoryReadPermission();
   },
 
   async readRecords(

@@ -197,6 +197,7 @@ describe('background Health Connect sync', () => {
       undefined,
       expect.any(Date),
       sessionController.signal,
+      false,
     );
     expect(secureHealthConnectTokenStore.recordBackgroundSuccess).toHaveBeenCalledWith(
       userId,
@@ -224,6 +225,7 @@ describe('background Health Connect sync', () => {
       undefined,
       expect.any(Date),
       sessionController.signal,
+      false,
     );
   });
 

@@ -28,8 +28,7 @@ _EXERCISE_MARGIN = timedelta(minutes=30)
 _EPISODE_GAP = timedelta(minutes=30)
 _ZEPP_PACKAGE = "com.huami.watch.hmwatchmanager"
 _GADGETBRIDGE_PACKAGE = "nodomain.freeyourgadget.gadgetbridge"
-# 同一只华为手环的两个读取通道。两者写入的都是手环本机记录，记录形态一致，
-# 所以心率规则对它们一视同仁，不像步数、距离那样存在跨来源重复累加的风险。
+# 两种来源可能对应不同手环；心率窗口与活动上下文必须分别计算。
 SOURCE_PACKAGES = (_ZEPP_PACKAGE, _GADGETBRIDGE_PACKAGE)
 
 HeartSample = tuple[datetime, int, WearableObservation]
@@ -479,29 +478,26 @@ async def evaluate_heart_rate_shadow(
     if profile is None:
         raise RuntimeError("用户缺少基础档案")
 
+    current_observations = list(
+        await session.scalars(
+            select(WearableObservation).where(
+                WearableObservation.user_id == task.user_id,
+                WearableObservation.record_type == WearableRecordType.HEART_RATE,
+                WearableObservation.last_import_id == imported.id,
+                WearableObservation.recording_method == _AUTOMATICALLY_RECORDED,
+                WearableObservation.deleted_at.is_(None),
+            )
+        )
+    )
+    source_package = _evaluated_source_package(current_observations)
     current_times: list[datetime] = []
     minute_samples: MinuteSamples = defaultdict(list)
     context_observations: list[WearableObservation] = []
-    source_package = _ZEPP_PACKAGE
     if (
         profile.age_years is not None
         and profile.age_years >= 18
         and imported.health_context_complete
     ):
-        current_observations = list(
-            await session.scalars(
-                select(WearableObservation).where(
-                    WearableObservation.user_id == task.user_id,
-                    WearableObservation.record_type
-                    == WearableRecordType.HEART_RATE,
-                    WearableObservation.last_import_id == imported.id,
-                    WearableObservation.recording_method
-                    == _AUTOMATICALLY_RECORDED,
-                    WearableObservation.deleted_at.is_(None),
-                )
-            )
-        )
-        source_package = _evaluated_source_package(current_observations)
         current_times = [sample[0] for sample in _samples(current_observations)]
         received_at = imported.created_at.astimezone(timezone.utc)
         if current_times and not any(
@@ -523,6 +519,7 @@ async def evaluate_heart_rate_shadow(
                             WearableObservation.user_id == task.user_id,
                             WearableObservation.record_type
                             == WearableRecordType.HEART_RATE,
+                            WearableObservation.source_package == source_package,
                             WearableObservation.recording_method
                             == _AUTOMATICALLY_RECORDED,
                             WearableObservation.deleted_at.is_(None),
@@ -546,6 +543,7 @@ async def evaluate_heart_rate_shadow(
                                     WearableRecordType.STEPS,
                                 }
                             ),
+                            WearableObservation.source_package == source_package,
                             WearableObservation.deleted_at.is_(None),
                             WearableObservation.end_time
                             >= search_start - _EXERCISE_MARGIN,

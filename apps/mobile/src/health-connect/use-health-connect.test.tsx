@@ -44,6 +44,7 @@ describe('useHealthConnect', () => {
       getSdkStatus: jest.fn(async () => 3),
       initialize: jest.fn(async () => true),
       requestReadPermissions: jest.fn(),
+      requestHistoryReadPermission: jest.fn(),
       getGrantedPermissions: jest.fn(async () => healthConnectReadPermissions),
       readRecords: jest.fn(),
       getChanges: jest.fn(),
@@ -60,7 +61,7 @@ describe('useHealthConnect', () => {
       recordBackgroundSuccess: jest.fn(),
       recordBackgroundFailure: jest.fn(),
     } as unknown as HealthConnectStore;
-    const importer = { importWearableRecords: jest.fn() };
+    const importer = { importWearableRecords: jest.fn(), listHealthConnectRecordIds: jest.fn() };
     let current!: ReturnType<typeof useHealthConnect>;
 
     function Probe() {

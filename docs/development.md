@@ -8,7 +8,7 @@ Windows 使用 WSL Ubuntu。以下命令都在 Ubuntu 终端运行；先确认 `
 
 ## 开始修改手机端
 
-完成 README 的安装步骤后，从最新 `main` 新建自己的分支。分支名描述这次工作，例如 `feature/wearable-import`。
+完成 README 的安装步骤后，从最新 `master` 新建自己的分支。分支名描述这次工作，例如 `feature/wearable-import`。
 
 示例配置已填好当前联调 API 地址。从 [README 的开发包链接](../README.md#安装包与维护) 安装 APK；后续原生代码有变化时向维护者取得新包。安装后在 `apps/mobile` 执行：
 
@@ -38,13 +38,13 @@ npx expo run:android --device
 
 ## 只检查后端代码
 
-安装 uv、Docker Compose，并启动 Docker。在仓库根目录执行：
+安装 uv，并准备独立的测试 PostgreSQL。在仓库根目录执行：
 
 ```bash
 bash scripts/check api
 ```
 
-它安装 Python 3.12 和锁定依赖，运行 Ruff、Pyright，并启动临时 PostgreSQL，再通过 `api/scripts/test` 完成迁移和测试，最后删除测试容器。无论本地是否配置了真实模型密钥，这条命令都使用明确的测试配置。
+它安装锁定依赖，运行 Ruff、Pyright，再通过 `api/scripts/test` 完成迁移和测试。默认使用临时 Docker PostgreSQL；已有独立测试实例时，可设置 `ANTANG_CHECK_DATABASE_URL`，脚本只创建和删除其中的临时测试数据库。无论本地是否配置了真实模型密钥，这条命令都使用明确的测试配置。
 
 只重跑某个后端测试时，先完成依赖安装，再执行：
 

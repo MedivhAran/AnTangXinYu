@@ -1,4 +1,16 @@
-import { activityFamily, buildSleepSessions, toIso } from './GadgetbridgeService';
+import { activityFamily, buildSleepSessions, singleHuaweiSource, toIso } from './GadgetbridgeService';
+
+test('华为导出库有多个设备或用户时拒绝混合健康数据', () => {
+  expect(singleHuaweiSource([{ DEVICE_ID: 1, USER_ID: 1 }])).toEqual({ deviceId: 1, userId: 1 });
+  expect(() => singleHuaweiSource([
+    { DEVICE_ID: 1, USER_ID: 1 },
+    { DEVICE_ID: 2, USER_ID: 1 },
+  ])).toThrow('多台华为手环');
+  expect(() => singleHuaweiSource([
+    { DEVICE_ID: 1, USER_ID: 1 },
+    { DEVICE_ID: 1, USER_ID: 2 },
+  ])).toThrow('多个用户');
+});
 
 /**
  * 回归：华为导出的睡眠表时间戳是毫秒，活动表是秒。

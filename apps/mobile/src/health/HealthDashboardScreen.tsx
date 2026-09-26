@@ -111,15 +111,14 @@ export function HealthDashboardScreen({ visible, onClose, bundle }: Props) {
           >
             <AppIcon color={colors.ink} icon={ArrowLeft01Icon} size={22} />
           </Pressable>
-          <Text style={s.headerTitle}>健康看板</Text>
+          <Text style={s.headerTitle}>本次导入预览</Text>
           <View style={s.headerSpacer} />
         </View>
 
         {!hasData ? (
           <View style={s.center}>
             <Text style={s.hint}>
-              还没有数据。{' '}
-              回聊天页点「Gadgetbridge 手环」横幅，选择 Gadgetbridge 导出的 .db 文件。
+              本次尚未选择 Gadgetbridge 导出文件。已上传的历史记录可在健康档案查看。
             </Text>
           </View>
         ) : (

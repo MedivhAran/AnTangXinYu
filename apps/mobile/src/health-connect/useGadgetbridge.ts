@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 
-import { API_URL_CONFIGURED } from '../config';
 import { errorMessage } from '../api/client';
 import {
   pickAndParseHealth,
@@ -161,15 +160,6 @@ export function useGadgetbridge(importer: WearableImporter) {
         lastBundle: result.bundle!,
         progress: `已解析：${result.message}`,
       }));
-
-      if (!API_URL_CONFIGURED) {
-        setState((previous) => ({
-          ...previous,
-          progress: null,
-          error: '后端地址未配置（构建时缺少 EXPO_PUBLIC_API_URL），数据只在本机展示。',
-        }));
-        return;
-      }
 
       setState((previous) => ({ ...previous, syncing: true }));
       const summary = await uploadBundle(

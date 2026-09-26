@@ -83,8 +83,10 @@ async def test_replay_includes_gadgetbridge_sourced_heart_rate(
         start_at=sample_start,
         end_at=sample_start + timedelta(minutes=30),
         timezone_name="UTC",
+        source_package="nodomain.freeyourgadget.gadgetbridge",
     )
 
+    assert report["source_package"] == "nodomain.freeyourgadget.gadgetbridge"
     snapshot = report["current_snapshot"]
     assert snapshot["summary"]["batch_count"] == 1
     assert snapshot["summary"]["sample_count"] == 30

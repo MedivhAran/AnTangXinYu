@@ -13,6 +13,7 @@ import {
   parseHealthProfileCardDecision,
   parseHealthProfileChangeResult,
   parseHealthProfileCards,
+  parseHealthConnectRecordIdsPage,
   parseMessageHistory,
   parseProactiveCareSettings,
   parseTokenPair,
@@ -22,6 +23,7 @@ import {
   type ChatStreamEvent,
   type ChatAttachment,
   type HealthProfile,
+  type HealthConnectRecordIdsPage,
   type HealthProfileCardAnswer,
   type HealthProfileCardDecision,
   type HealthProfileCards,
@@ -551,6 +553,21 @@ export class ApiClient {
     );
     if (!response.ok) throw await this.apiError(response);
     return parseWearableImportResponse(await responseJson(response));
+  }
+
+  async listHealthConnectRecordIds(
+    recordType: WearableRecord['record_type'],
+    after?: string,
+    signal?: AbortSignal,
+  ): Promise<HealthConnectRecordIdsPage> {
+    const query = new URLSearchParams({ record_type: recordType });
+    if (after !== undefined) query.set('after', after);
+    const response = await this.authorizedFetch(
+      `/api/v1/health-profile/wearable-health-connect-ids?${query.toString()}`,
+      { signal },
+    );
+    if (!response.ok) throw await this.apiError(response);
+    return parseHealthConnectRecordIdsPage(await responseJson(response));
   }
 
   async streamMessage(
