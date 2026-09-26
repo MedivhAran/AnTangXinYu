@@ -24,7 +24,7 @@ type Props = {
   onClose: () => void;
   onOpenHealth: () => void;
   onOpenSettings: () => void;
-  onOpenDashboard?: () => void;   // ← 新增
+  onOpenDashboard?: () => void;
   onSelectConversation: (messageId: string) => void;
   username: string;
   visible: boolean;
@@ -51,7 +51,7 @@ export function AppMenu({
   onClose,
   onOpenHealth,
   onOpenSettings,
-  onOpenDashboard = () => { },   // ← 新增
+  onOpenDashboard = () => { },
   onSelectConversation,
   username,
   visible,
@@ -139,7 +139,7 @@ export function AppMenu({
 
           {/* ===== 新增：健康看板入口 ===== */}
           <Pressable
-            accessibilityLabel="本次导入预览"
+            accessibilityLabel="健康看板"
             accessibilityRole="button"
             onPress={onOpenDashboard}
             style={({ pressed }) => [
@@ -151,8 +151,8 @@ export function AppMenu({
               <AppIcon color={colors.primaryPressed} icon={ChartLineData01Icon} size={26} />
             </View>
             <View style={styles.healthCopy}>
-              <Text style={styles.healthTitle}>本次导入预览</Text>
-              <Text style={styles.healthHint}>查看最近选取文件的心率、睡眠等数据</Text>
+              <Text style={styles.healthTitle}>健康看板</Text>
+              <Text style={styles.healthHint}>查看近 30 天已保存的手环记录</Text>
             </View>
             <AppIcon color={colors.muted} icon={ArrowRight01Icon} size={20} />
           </Pressable>

@@ -43,6 +43,7 @@ export type HealthOverviewScreenProps = {
   onClose: () => void;
   onProfileChanged?: () => void;
   onSyncWearable?: () => Promise<void>;
+  wearableSyncCompletedAt?: string | null;
 };
 
 const colors = {
@@ -258,6 +259,7 @@ export function HealthOverviewScreen({
   onClose,
   onProfileChanged,
   onSyncWearable,
+  wearableSyncCompletedAt,
 }: HealthOverviewScreenProps) {
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -306,7 +308,7 @@ export function HealthOverviewScreen({
       request?.abort();
       if (request !== controller) controller.abort();
     };
-  }, [api, loadAttempt]);
+  }, [api, loadAttempt, wearableSyncCompletedAt]);
 
   const orderedWearable = [...(profile?.wearableLatest ?? [])].sort(
     (left, right) =>
@@ -354,8 +356,8 @@ export function HealthOverviewScreen({
         setError(errorMessage(reason));
       }
     } finally {
-      if (mountedRef.current && requestRef.current === controller) {
-        requestRef.current = null;
+      if (mountedRef.current) {
+        if (requestRef.current === controller) requestRef.current = null;
         setRefreshing(false);
       }
     }
@@ -518,7 +520,7 @@ export function HealthOverviewScreen({
           <RefreshControl
             colors={[colors.pine]}
             enabled={profile !== null}
-            onRefresh={() => void refreshProfile()}
+            onRefresh={() => void refreshProfile(true)}
             refreshing={refreshing}
             tintColor={colors.pine}
           />
@@ -576,7 +578,7 @@ export function HealthOverviewScreen({
             我的健康
           </Text>
           <Text style={styles.heroDescription}>
-            已写入的档案，以及设备同步到服务器的最近记录。
+            已写入的档案，以及设备同步到服务器的最近记录。点“同步”可读取手机中的新数据。
           </Text>
           <View style={styles.heroMetaRow}>
             <View style={styles.historyPill}>
@@ -586,6 +588,11 @@ export function HealthOverviewScreen({
             {latestObservation === null ? null : (
               <Text selectable style={styles.latestText}>
                 最近观测 {formatDateTime(latestObservation)}
+              </Text>
+            )}
+            {wearableSyncCompletedAt === null || wearableSyncCompletedAt === undefined ? null : (
+              <Text selectable style={styles.latestText}>
+                上次检查 Health Connect {formatDateTime(wearableSyncCompletedAt)}
               </Text>
             )}
           </View>
@@ -793,19 +800,15 @@ function WearableCard({
     case 'heart_rate': {
       const samples = observation.data.samples;
       const latest = samples[samples.length - 1];
-      const trend = heartRateTrend.length > 0
-        ? heartRateTrend
-        : samples.map((sample) => ({
-            observedAt: sample.time,
-            beatsPerMinute: sample.beatsPerMinute,
-          }));
-      const values = trend.map((item) => item.beatsPerMinute);
-      const minimum = Math.min(...values);
-      const maximum = Math.max(...values);
+      const values = heartRateTrend.map((item) => item.beatsPerMinute);
+      const minimum = values.length === 0 ? null : Math.min(...values);
+      const maximum = values.length === 0 ? null : Math.max(...values);
       return (
         <MetricCard
           accent={colors.clay}
-          hint={`近 6 小时 ${trend.length} 个采样点 · 范围 ${minimum}–${maximum} 次/分 · 末次采样 ${formatDateTime(latest.time)}`}
+          hint={minimum === null || maximum === null
+            ? `近 6 小时无新采样 · 末次采样 ${formatDateTime(latest.time)}`
+            : `近 6 小时 ${heartRateTrend.length} 个采样点 · 范围 ${minimum}–${maximum} 次/分 · 末次采样 ${formatDateTime(latest.time)}`}
           observedAt={observation.observedAt}
           sourcePackage={observation.sourcePackage}
           title="心率"
@@ -813,7 +816,7 @@ function WearableCard({
           value={String(latest.beatsPerMinute)}
           wide
         >
-          <HeartRateTrend points={trend} />
+          {heartRateTrend.length >= 2 ? <HeartRateTrend points={heartRateTrend} /> : null}
         </MetricCard>
       );
     }

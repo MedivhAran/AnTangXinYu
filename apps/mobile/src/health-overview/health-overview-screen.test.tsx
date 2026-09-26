@@ -255,6 +255,82 @@ describe('HealthOverviewScreen', () => {
     act(() => tree!.unmount());
   });
 
+  test('does not draw an old single sample as a recent trend and reloads after sync', async () => {
+    const stale: HealthProfile = {
+      ...profile,
+      heartRateTrend: [],
+      wearableLatest: [{
+        recordType: 'heart_rate',
+        observedAt: '2026-09-25T07:37:00Z',
+        sourcePackage: 'com.huami.watch.hmwatchmanager',
+        data: { samples: [{ time: '2026-09-25T07:37:00Z', beatsPerMinute: 72 }] },
+      }],
+    };
+    const current: HealthProfile = {
+      ...stale,
+      heartRateTrend: [
+        { observedAt: '2026-09-26T12:00:00Z', beatsPerMinute: 76 },
+        { observedAt: '2026-09-26T12:05:00Z', beatsPerMinute: 82 },
+      ],
+      wearableLatest: [{
+        recordType: 'heart_rate',
+        observedAt: '2026-09-26T12:05:00Z',
+        sourcePackage: 'com.huami.watch.hmwatchmanager',
+        data: { samples: [{ time: '2026-09-26T12:05:00Z', beatsPerMinute: 82 }] },
+      }],
+    };
+    const api = {
+      getHealthProfile: jest.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(current),
+    } as unknown as ApiClient;
+    const onClose = jest.fn();
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <HealthOverviewScreen api={api} onClose={onClose} wearableSyncCompletedAt={null} />,
+      );
+    });
+    expect(tree!.root.findAll((node) =>
+      typeof node.props.children === 'string' &&
+      node.props.children.includes('近 6 小时无新采样')).length).toBeGreaterThan(0);
+    expect(tree!.root.findAll((node) =>
+      typeof node.props.accessibilityLabel === 'string' &&
+      node.props.accessibilityLabel.startsWith('最近 6 小时心率趋势')).length).toBe(0);
+
+    await act(async () => {
+      tree!.update(
+        <HealthOverviewScreen
+          api={api}
+          onClose={onClose}
+          wearableSyncCompletedAt="2026-09-26T12:06:00Z"
+        />,
+      );
+    });
+    expect(api.getHealthProfile).toHaveBeenCalledTimes(2);
+    expect(tree!.root.findByProps({ children: '82' })).toBeTruthy();
+    act(() => tree!.unmount());
+  });
+
+  test('shows a Health Connect sync error instead of reloading stale readings', async () => {
+    const api = { getHealthProfile: jest.fn().mockResolvedValue(profile) } as unknown as ApiClient;
+    const onSyncWearable = jest.fn().mockRejectedValue(new Error('Health Connect 读取失败'));
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        <HealthOverviewScreen
+          api={api}
+          onClose={jest.fn()}
+          onSyncWearable={onSyncWearable}
+        />,
+      );
+    });
+    await act(async () => {
+      tree!.root.findByProps({ accessibilityLabel: '同步 Health Connect 数据' }).props.onPress();
+    });
+    expect(api.getHealthProfile).toHaveBeenCalledTimes(1);
+    expect(tree!.root.findByProps({ children: 'Health Connect 读取失败' })).toBeTruthy();
+    act(() => tree!.unmount());
+  });
+
   test('shows a readable error and retries without needing to reopen the screen', async () => {
     const api = {
       getHealthProfile: jest

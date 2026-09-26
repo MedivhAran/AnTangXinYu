@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -305,6 +305,55 @@ class WearableImportResponse(BaseModel):
 class HealthConnectRecordIdsResponse(BaseModel):
     ids: list[str]
     next_after: str | None
+
+
+class WearableDashboardDay(BaseModel):
+    day: date
+    steps: int
+    distance_meters: float
+
+
+class WearableDashboardHeartRatePoint(BaseModel):
+    observed_at: datetime
+    beats_per_minute: int
+
+
+class WearableDashboardSleepSession(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    stages: list[SleepStage]
+
+
+class WearableDashboardTotals(BaseModel):
+    heart_rate_samples: int
+    heart_rate_minimum: int | None
+    heart_rate_maximum: int | None
+    heart_rate_average: float | None
+    steps: int
+    distance_meters: float
+    oxygen_saturation_samples: int
+    oxygen_saturation_minimum: float | None
+    oxygen_saturation_average: float | None
+    resting_heart_rate_samples: int
+    resting_heart_rate_minimum: int | None
+    sleep_sessions: int
+    sleep_minutes: int
+
+
+class WearableDashboardSource(BaseModel):
+    source_package: str
+    device: WearableDevice | None
+    latest_observed_at: datetime
+    daily: list[WearableDashboardDay]
+    heart_rate_trend: list[WearableDashboardHeartRatePoint]
+    sleep_sessions: list[WearableDashboardSleepSession]
+    totals: WearableDashboardTotals
+
+
+class WearableDashboardResponse(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    sources: list[WearableDashboardSource]
 
 
 class WearableLatestResponse(BaseModel):

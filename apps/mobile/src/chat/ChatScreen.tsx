@@ -592,7 +592,9 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           accessibilityRole="button"
           onPress={() => {
             if (healthConnect.connected) setShowCareSettings(true);
-            else void healthConnect.connect();
+            else void healthConnect.connect().catch(() => {
+              // The connection banner renders the failure stored by useHealthConnect.
+            });
           }}
           style={styles.healthNotice}
         >
@@ -956,14 +958,17 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           onClose={() => setShowHealthOverview(false)}
           onProfileChanged={() => void refreshHealthProfileCards()}
           onSyncWearable={healthConnect.sync}
+          wearableSyncCompletedAt={healthConnect.lastSyncedAt}
         />
       </Modal>
 
       {/* ===== 新增：健康看板 Modal ===== */}
       <HealthDashboardScreen
+        api={api}
         visible={showDashboard}
         onClose={() => setShowDashboard(false)}
-        bundle={gadgetbridge.lastBundle}
+        refreshKey={`${healthConnect.lastSyncedAt ?? ''}:${gadgetbridge.lastSyncedAt ?? ''}`}
+        importPreview={gadgetbridge.lastBundle}
       />
 
       <AppMenu

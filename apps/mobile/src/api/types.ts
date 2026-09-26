@@ -355,6 +355,42 @@ export type HealthConnectRecordIdsPage = {
   nextAfter: string | null;
 };
 
+export type WearableDashboardSleepSession = {
+  startTime: string;
+  endTime: string;
+  stages: SleepStage[];
+};
+
+export type WearableDashboardSource = {
+  sourcePackage: string;
+  device: { manufacturer: string | null; model: string | null } | null;
+  latestObservedAt: string;
+  daily: { day: string; steps: number; distanceMeters: number }[];
+  heartRateTrend: HeartRateTrendPoint[];
+  sleepSessions: WearableDashboardSleepSession[];
+  totals: {
+    heartRateSamples: number;
+    heartRateMinimum: number | null;
+    heartRateMaximum: number | null;
+    heartRateAverage: number | null;
+    steps: number;
+    distanceMeters: number;
+    oxygenSaturationSamples: number;
+    oxygenSaturationMinimum: number | null;
+    oxygenSaturationAverage: number | null;
+    restingHeartRateSamples: number;
+    restingHeartRateMinimum: number | null;
+    sleepSessions: number;
+    sleepMinutes: number;
+  };
+};
+
+export type WearableDashboard = {
+  periodStart: string;
+  periodEnd: string;
+  sources: WearableDashboardSource[];
+};
+
 export type MessageStartedEvent = {
   type: 'message_started';
   userMessageId: string;
@@ -1170,6 +1206,109 @@ export function parseHealthConnectRecordIdsPage(value: unknown): HealthConnectRe
     ids: data.ids.map((id, index) =>
       stringValue(id, `Health Connect record IDs.ids[${index}]`)),
     nextAfter: nullableStringValue(data.next_after, 'Health Connect record IDs.next_after'),
+  };
+}
+
+function nonNegativeNumberValue(value: unknown, name: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} 必须是非负数字`);
+  }
+  return value;
+}
+
+function nullableDashboardNumber(value: unknown, name: string): number | null {
+  return value === null ? null : nonNegativeNumberValue(value, name);
+}
+
+export function parseWearableDashboard(value: unknown): WearableDashboard {
+  const data = objectValue(value, 'wearable dashboard');
+  if (!Array.isArray(data.sources)) throw new Error('wearable dashboard.sources 必须是数组');
+  const sources = data.sources.map((item, index): WearableDashboardSource => {
+    const name = `wearable dashboard.sources[${index}]`;
+    const source = objectValue(item, name);
+    const sourcePackage = stringValue(source.source_package, `${name}.source_package`);
+    if (![
+      'com.huami.watch.hmwatchmanager',
+      'nodomain.freeyourgadget.gadgetbridge',
+    ].includes(sourcePackage)) {
+      throw new Error(`${name}.source_package 无效`);
+    }
+    const device = source.device === null ? null : objectValue(source.device, `${name}.device`);
+    if (!Array.isArray(source.daily) || !Array.isArray(source.heart_rate_trend) ||
+        !Array.isArray(source.sleep_sessions)) {
+      throw new Error(`${name} 的图表数据必须是数组`);
+    }
+    const totals = objectValue(source.totals, `${name}.totals`);
+    return {
+      sourcePackage,
+      device: device === null ? null : {
+        manufacturer: nullableStringValue(device.manufacturer, `${name}.device.manufacturer`),
+        model: nullableStringValue(device.model, `${name}.device.model`),
+      },
+      latestObservedAt: zonedDateTimeValue(source.latest_observed_at, `${name}.latest_observed_at`),
+      daily: source.daily.map((entry, dayIndex) => {
+        const dayName = `${name}.daily[${dayIndex}]`;
+        const day = objectValue(entry, dayName);
+        return {
+          day: dateOnlyValue(day.day, `${dayName}.day`),
+          steps: integerValue(day.steps, `${dayName}.steps`),
+          distanceMeters: nonNegativeNumberValue(day.distance_meters, `${dayName}.distance_meters`),
+        };
+      }),
+      heartRateTrend: source.heart_rate_trend.map((entry, pointIndex) => {
+        const pointName = `${name}.heart_rate_trend[${pointIndex}]`;
+        const point = objectValue(entry, pointName);
+        return {
+          observedAt: zonedDateTimeValue(point.observed_at, `${pointName}.observed_at`),
+          beatsPerMinute: positiveIntegerValue(point.beats_per_minute, `${pointName}.beats_per_minute`),
+        };
+      }),
+      sleepSessions: source.sleep_sessions.map((entry, sessionIndex) => {
+        const sessionName = `${name}.sleep_sessions[${sessionIndex}]`;
+        const session = objectValue(entry, sessionName);
+        if (!Array.isArray(session.stages)) throw new Error(`${sessionName}.stages 必须是数组`);
+        return {
+          startTime: zonedDateTimeValue(session.start_time, `${sessionName}.start_time`),
+          endTime: zonedDateTimeValue(session.end_time, `${sessionName}.end_time`),
+          stages: session.stages.map((entryStage, stageIndex) => {
+            const stageName = `${sessionName}.stages[${stageIndex}]`;
+            const stage = objectValue(entryStage, stageName);
+            const stageValue = stringValue(stage.stage, `${stageName}.stage`);
+            if (!['unknown', 'awake', 'sleeping', 'out_of_bed', 'awake_in_bed', 'light', 'deep', 'rem'].includes(stageValue)) {
+              throw new Error(`${stageName}.stage 无效`);
+            }
+            return {
+              startTime: zonedDateTimeValue(stage.start_time, `${stageName}.start_time`),
+              endTime: zonedDateTimeValue(stage.end_time, `${stageName}.end_time`),
+              stage: stageValue as SleepStage['stage'],
+            };
+          }),
+        };
+      }),
+      totals: {
+        heartRateSamples: integerValue(totals.heart_rate_samples, `${name}.totals.heart_rate_samples`),
+        heartRateMinimum: nullableDashboardNumber(totals.heart_rate_minimum, `${name}.totals.heart_rate_minimum`),
+        heartRateMaximum: nullableDashboardNumber(totals.heart_rate_maximum, `${name}.totals.heart_rate_maximum`),
+        heartRateAverage: nullableDashboardNumber(totals.heart_rate_average, `${name}.totals.heart_rate_average`),
+        steps: integerValue(totals.steps, `${name}.totals.steps`),
+        distanceMeters: nonNegativeNumberValue(totals.distance_meters, `${name}.totals.distance_meters`),
+        oxygenSaturationSamples: integerValue(totals.oxygen_saturation_samples, `${name}.totals.oxygen_saturation_samples`),
+        oxygenSaturationMinimum: nullableDashboardNumber(totals.oxygen_saturation_minimum, `${name}.totals.oxygen_saturation_minimum`),
+        oxygenSaturationAverage: nullableDashboardNumber(totals.oxygen_saturation_average, `${name}.totals.oxygen_saturation_average`),
+        restingHeartRateSamples: integerValue(totals.resting_heart_rate_samples, `${name}.totals.resting_heart_rate_samples`),
+        restingHeartRateMinimum: nullableDashboardNumber(totals.resting_heart_rate_minimum, `${name}.totals.resting_heart_rate_minimum`),
+        sleepSessions: integerValue(totals.sleep_sessions, `${name}.totals.sleep_sessions`),
+        sleepMinutes: integerValue(totals.sleep_minutes, `${name}.totals.sleep_minutes`),
+      },
+    };
+  });
+  if (new Set(sources.map((source) => source.sourcePackage)).size !== sources.length) {
+    throw new Error('wearable dashboard.sources 包含重复来源');
+  }
+  return {
+    periodStart: zonedDateTimeValue(data.period_start, 'wearable dashboard.period_start'),
+    periodEnd: zonedDateTimeValue(data.period_end, 'wearable dashboard.period_end'),
+    sources,
   };
 }
 

@@ -14,6 +14,7 @@ import {
   parseHealthProfileChangeResult,
   parseHealthProfileCards,
   parseHealthConnectRecordIdsPage,
+  parseWearableDashboard,
   parseMessageHistory,
   parseProactiveCareSettings,
   parseTokenPair,
@@ -24,6 +25,7 @@ import {
   type ChatAttachment,
   type HealthProfile,
   type HealthConnectRecordIdsPage,
+  type WearableDashboard,
   type HealthProfileCardAnswer,
   type HealthProfileCardDecision,
   type HealthProfileCards,
@@ -442,6 +444,14 @@ export class ApiClient {
     });
     if (!response.ok) throw await this.apiError(response);
     return parseHealthProfile(await responseJson(response));
+  }
+
+  async getWearableDashboard(signal?: AbortSignal): Promise<WearableDashboard> {
+    const response = await this.authorizedFetch(
+      '/api/v1/health-profile/wearable-dashboard', { signal },
+    );
+    if (!response.ok) throw await this.apiError(response);
+    return parseWearableDashboard(await responseJson(response));
   }
 
   async answerHealthProfileCard(

@@ -92,4 +92,31 @@ describe('useHealthConnect', () => {
     expect(runHealthConnectSync).toHaveBeenCalledTimes(1);
     expect(importer.importWearableRecords).not.toHaveBeenCalled();
   });
+
+  test('manual sync reports a native failure to the page', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    jest.mocked(runHealthConnectSync).mockRejectedValue(new Error('Health Connect 读取失败'));
+    const gateway = {
+      getSdkStatus: jest.fn(async () => 3),
+      initialize: jest.fn(async () => true),
+      getGrantedPermissions: jest.fn(async () => healthConnectReadPermissions),
+    } as unknown as HealthConnectGateway;
+    const tokenStore = {
+      getActiveUserId: jest.fn(async () => 'another-user'),
+      setActiveUserId: jest.fn(),
+    } as unknown as HealthConnectStore;
+    const importer = { importWearableRecords: jest.fn(), listHealthConnectRecordIds: jest.fn() };
+    let current!: ReturnType<typeof useHealthConnect>;
+    function Probe() {
+      current = useHealthConnect('user-1', importer, gateway, tokenStore);
+      return null;
+    }
+    let tree: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Probe />); });
+    await act(async () => {
+      await expect(current.sync()).rejects.toThrow('Health Connect 读取失败');
+    });
+    expect(current.error).toBe('Health Connect 读取失败');
+    act(() => tree!.unmount());
+  });
 });

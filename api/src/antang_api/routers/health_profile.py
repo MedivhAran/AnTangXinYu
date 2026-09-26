@@ -25,6 +25,7 @@ from antang_api.health_profile.service import (
     load_health_profile_snapshot,
     profile_card_options,
 )
+from antang_api.health_profile.wearable_dashboard import read_wearable_dashboard
 from antang_api.health_profile.wearable_service import (
     list_health_connect_record_ids,
     process_wearable_import,
@@ -54,6 +55,7 @@ from antang_api.schemas.health_profile import (
     ProfileCardsResponse,
     WearableImportRequest,
     WearableImportResponse,
+    WearableDashboardResponse,
     WearableLatestResponse,
 )
 
@@ -72,13 +74,26 @@ async def get_health_profile(
     )
     trend_end = datetime.now(UTC)
     trend_start = trend_end - timedelta(hours=6)
-    heart_rate_observations = await read_wearable_observations(
-        session,
-        user_id=user.id,
-        record_types=[WearableRecordType.HEART_RATE],
-        start=trend_start,
-        end=trend_end,
-        limit=5000,
+    latest_heart_source = next(
+        (
+            item.source_package
+            for item in latest
+            if item.record_type is WearableRecordType.HEART_RATE
+        ),
+        None,
+    )
+    heart_rate_observations = (
+        await read_wearable_observations(
+            session,
+            user_id=user.id,
+            record_types=[WearableRecordType.HEART_RATE],
+            start=trend_start,
+            end=trend_end,
+            source_package=latest_heart_source,
+            limit=5000,
+        )
+        if latest_heart_source is not None
+        else []
     )
     heart_rate_points = {
         sample.time: sample.beats_per_minute
@@ -368,3 +383,11 @@ async def get_health_connect_record_ids(
         limit=limit,
     )
     return HealthConnectRecordIdsResponse(ids=ids, next_after=next_after)
+
+
+@router.get("/wearable-dashboard", response_model=WearableDashboardResponse)
+async def get_wearable_dashboard(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> WearableDashboardResponse:
+    return await read_wearable_dashboard(session, user_id=user.id)

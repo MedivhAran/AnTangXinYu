@@ -249,6 +249,7 @@ async def read_wearable_observations(
     record_types: Sequence[WearableRecordType],
     start: datetime,
     end: datetime,
+    source_package: str | None = None,
     limit: int = 200,
 ) -> list[WearableObservationSnapshot]:
     """读取有明确类型、时间范围和数量上限的原始观测。"""
@@ -258,22 +259,22 @@ async def read_wearable_observations(
         raise InvalidProfileProposalError(
             "wearable query limit must be between 1 and 5000"
         )
+    query = select(WearableObservation).where(
+        WearableObservation.user_id == user_id,
+        WearableObservation.provider == _PROVIDER,
+        WearableObservation.record_type.in_(set(record_types)),
+        WearableObservation.deleted_at.is_(None),
+        WearableObservation.end_time >= start,
+        WearableObservation.start_time <= end,
+    )
+    if source_package is not None:
+        query = query.where(WearableObservation.source_package == source_package)
     observations = list(
         await session.scalars(
-            select(WearableObservation)
-            .where(
-                WearableObservation.user_id == user_id,
-                WearableObservation.provider == _PROVIDER,
-                WearableObservation.record_type.in_(set(record_types)),
-                WearableObservation.deleted_at.is_(None),
-                WearableObservation.end_time >= start,
-                WearableObservation.start_time <= end,
-            )
-            .order_by(
+            query.order_by(
                 WearableObservation.start_time.desc(),
                 WearableObservation.id.desc(),
-            )
-            .limit(limit)
+            ).limit(limit)
         )
     )
     return [WearableObservationSnapshot.model_validate(item) for item in observations]

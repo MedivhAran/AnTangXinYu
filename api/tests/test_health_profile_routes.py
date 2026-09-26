@@ -83,6 +83,16 @@ async def test_registration_creates_profile_and_authenticated_profile_api(
         )
         assert unauthorized.status_code == 401
 
+        dashboard_response = await client.get(
+            "/api/v1/health-profile/wearable-dashboard", headers=headers,
+        )
+        assert dashboard_response.status_code == 200
+        assert dashboard_response.json()["sources"] == []
+        unauthorized_dashboard = await client.get(
+            "/api/v1/health-profile/wearable-dashboard",
+        )
+        assert unauthorized_dashboard.status_code == 401
+
         user = await db_session.get(User, auth["user"]["id"])
         assert user is not None
         assert await db_session.get(PersonalProfile, user.id) is not None

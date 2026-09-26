@@ -160,6 +160,7 @@ export function useHealthConnect(
               error: errorMessage(error),
             }));
           }
+          throw error;
         } finally {
           if (syncController.current === controller) syncController.current = null;
         }
@@ -209,7 +210,11 @@ export function useHealthConnect(
     void refreshBackgroundStatus();
     void restoreAndSync();
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active' && connected.current) void runSync(false);
+      if (nextState === 'active' && connected.current) {
+        void runSync(false).catch(() => {
+          // runSync has already placed the error in the visible connection state.
+        });
+      }
     });
     return () => {
       mounted.current = false;

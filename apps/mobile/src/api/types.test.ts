@@ -7,6 +7,7 @@ import {
   parseMessageHistory,
   parseProactiveCareSettings,
   parseProactiveCareNotificationData,
+  parseWearableDashboard,
 } from './types';
 
 const assistantId = '019b2222-2222-7222-8222-222222222222';
@@ -65,6 +66,41 @@ describe('message history sources', () => {
         ]),
       ),
     ).toThrow('message.sources 包含重复的 S1');
+  });
+});
+
+test('parses a saved wearable dashboard without mixing source metrics', () => {
+  const dashboard = parseWearableDashboard({
+    period_start: '2026-08-27T12:00:00Z',
+    period_end: '2026-09-26T12:00:00Z',
+    sources: [{
+      source_package: 'com.huami.watch.hmwatchmanager',
+      device: { manufacturer: 'Amazfit', model: 'Active 2', device_type: 2 },
+      latest_observed_at: '2026-09-26T11:00:00Z',
+      daily: [{ day: '2026-09-26', steps: 200, distance_meters: 123.5 }],
+      heart_rate_trend: [{ observed_at: '2026-09-26T11:00:00Z', beats_per_minute: 81 }],
+      sleep_sessions: [],
+      totals: {
+        heart_rate_samples: 1,
+        heart_rate_minimum: 81,
+        heart_rate_maximum: 81,
+        heart_rate_average: 81,
+        steps: 200,
+        distance_meters: 123.5,
+        oxygen_saturation_samples: 0,
+        oxygen_saturation_minimum: null,
+        oxygen_saturation_average: null,
+        resting_heart_rate_samples: 0,
+        resting_heart_rate_minimum: null,
+        sleep_sessions: 0,
+        sleep_minutes: 0,
+      },
+    }],
+  });
+  expect(dashboard.sources[0]).toMatchObject({
+    sourcePackage: 'com.huami.watch.hmwatchmanager',
+    daily: [{ day: '2026-09-26', steps: 200, distanceMeters: 123.5 }],
+    heartRateTrend: [{ beatsPerMinute: 81 }],
   });
 });
 
