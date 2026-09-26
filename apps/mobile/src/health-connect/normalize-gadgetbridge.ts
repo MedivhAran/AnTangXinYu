@@ -25,28 +25,18 @@ import {
 export const IMPORT_BATCH_SIZE = 1000;
 
 /**
- * ⚠️ 这里需要你拍板，我不擅自改后端已确认的行为。
+ * 手环数据的来源标识。
  *
- * 后端 api/src/antang_api/schemas/health_profile.py 把来源写死了：
- *     source_package: Literal["com.huami.watch.hmwatchmanager"]
- * 对应 AGENTS.md 里已确认的决定——"首版只接收目标设备实际使用的 Google Play 版
- * Zepp 数据源，这同时避免把手机或其他 App 的累计步数、距离再次相加"。
+ * 后端 api/src/antang_api/schemas/health_profile.py 只接受这两个包名，其余来源
+ * 一律拒绝——目的是避免把手机或其他 App 的累计步数、距离重复累加。
+ * 两者读的是同一只手环的本机记录，所以心率规则对它们一视同仁。
  *
- * 而 Gadgetbridge 导入的数据，真实来源是
- *     nodomain.freeyourgadget.gadgetbridge
- *
- * 两者只能选一个：
- *   · 填 ZEPP 常量（当前值）：今天就能传通，但库里存的来源是错的，而且
- *     api/src/antang_api/proactive_care/heart_rate_replay.py 的 _ZEPP_PACKAGE
- *     过滤会把它当成 Zepp 数据参与主动关怀。
- *   · 填 GADGETBRIDGE 常量：语义正确，但在后端放开这个 Literal 之前一定 422。
- *
- * 后端改动很小（见 patch），但那属于改动已确认的产品行为，所以我按能跑通的
- * 方式先落地，等你决定后再一行切换。
+ * 本项目实际可用的通道是 Gadgetbridge：华为机型没有 Health Connect 通路，
+ * 走不通 Zepp，所以如实标注 Gadgetbridge 包名。
  */
 export const ZEPP_SOURCE_PACKAGE = 'com.huami.watch.hmwatchmanager';
 export const GADGETBRIDGE_SOURCE_PACKAGE = 'nodomain.freeyourgadget.gadgetbridge';
-export const SOURCE_PACKAGE = ZEPP_SOURCE_PACKAGE;
+export const SOURCE_PACKAGE = GADGETBRIDGE_SOURCE_PACKAGE;
 
 /** Health Connect 的 RECORDING_METHOD_AUTOMATICALLY_RECORDED，手环自动记录与之语义一致。 */
 const RECORDING_METHOD_AUTOMATICALLY_RECORDED = 2;

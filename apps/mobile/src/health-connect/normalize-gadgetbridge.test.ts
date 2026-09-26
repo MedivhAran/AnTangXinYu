@@ -1,4 +1,8 @@
-import { buildImportBatches, normalizeGadgetbridgeBundle } from './normalize-gadgetbridge';
+import {
+  buildImportBatches,
+  GADGETBRIDGE_SOURCE_PACKAGE,
+  normalizeGadgetbridgeBundle,
+} from './normalize-gadgetbridge';
 import type { HealthBundle, SleepSession } from '../services/GadgetbridgeService';
 
 // 后端 WearableImportRequest 是 StrictApiModel(extra="forbid")，
@@ -91,6 +95,16 @@ describe('normalizeGadgetbridgeBundle', () => {
       for (const record of group.records) {
         expect(Object.keys(record).sort()).toEqual(BASE_KEYS);
         expect(record.record_type).toBe(group.recordType);
+      }
+    }
+  });
+
+  it('所有记录都如实标注 Gadgetbridge 为数据来源', () => {
+    const groups = normalizeGadgetbridgeBundle(bundle());
+    expect(groups.length).toBeGreaterThan(0);
+    for (const group of groups) {
+      for (const record of group.records) {
+        expect(record.source_package).toBe(GADGETBRIDGE_SOURCE_PACKAGE);
       }
     }
   });
