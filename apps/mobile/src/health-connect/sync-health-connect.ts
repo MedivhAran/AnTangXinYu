@@ -340,7 +340,6 @@ async function recoverExpiredType(
     throw new HealthConnectTokenExpiredError(recordType, true);
   }
 
-  let snapshotRecordCount = 0;
   let pageToken: string | undefined;
   do {
     throwIfCancelled(signal);
@@ -357,7 +356,6 @@ async function recoverExpiredType(
       mergeNewestRecord(records, record);
       serverIds.delete(record.external_record_id);
     }
-    snapshotRecordCount += records.size;
     if (records.size > 0) {
       await importInBatches(
         importer, recordType, healthContextComplete, [...records.values()], [], signal,
@@ -368,12 +366,6 @@ async function recoverExpiredType(
     }
     pageToken = page.pageToken;
   } while (pageToken !== undefined);
-
-  // A completely empty result with previously stored records could mean the
-  // source app or its Health Connect data disappeared. Keep server data intact.
-  if (snapshotRecordCount === 0 && serverIds.size > 0) {
-    throw new Error(`Health Connect 未返回任何${recordType}历史记录，已保留服务器原始数据`);
-  }
 
   let fetchedAfterRead = false;
   while (true) {

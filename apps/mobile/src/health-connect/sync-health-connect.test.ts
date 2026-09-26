@@ -361,7 +361,7 @@ describe('syncHealthConnect', () => {
     );
   });
 
-  test('keeps the expired cursor and server records when full history is empty', async () => {
+  test('marks old server records deleted when the complete phone history is empty', async () => {
     const gateway = {
       getChanges: jest.fn(async (recordType: SupportedHealthConnectRecordType, token?: string) => ({
         upsertionChanges: [], deletionChanges: [],
@@ -383,15 +383,15 @@ describe('syncHealthConnect', () => {
       })),
     };
 
-    await expect(syncHealthConnect(
+    await syncHealthConnect(
       '019b1111-1111-7111-8111-111111111111', gateway, tokenStore, importer,
-    )).rejects.toThrow('已保留服务器原始数据');
-    expect(tokenStore.saveToken).not.toHaveBeenCalledWith(
-      expect.anything(), 'ExerciseSession', expect.anything(),
     );
-    expect(importer.importWearableRecords).not.toHaveBeenCalledWith(
+    expect(importer.importWearableRecords).toHaveBeenCalledWith(
       expect.anything(), 'exercise', expect.anything(),
-      expect.anything(), expect.arrayContaining(['existing-exercise']), expect.anything(),
+      [], ['existing-exercise'], undefined,
+    );
+    expect(tokenStore.saveToken).toHaveBeenCalledWith(
+      expect.anything(), 'ExerciseSession', 'ExerciseSession-new',
     );
   });
 
