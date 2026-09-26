@@ -30,9 +30,6 @@ import * as SQLite from 'expo-sqlite';
 /** 步数/距离/卡路里的分桶粒度（分钟）。 */
 export const BUCKET_MINUTES = 15;
 
-/** 后端 HeartRateData.samples 的上限（api/.../schemas/health_profile.py）。 */
-export const MAX_HEART_RATE_SAMPLES_PER_RECORD = 10000;
-
 // ===== 类型 =====
 export type HeartRateRecord = { timestamp: string; heartRate: number };
 export type StepRecord = { timestamp: string; steps: number };

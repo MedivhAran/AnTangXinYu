@@ -118,24 +118,48 @@ describe('normalizeGadgetbridgeBundle', () => {
     expect(types).not.toContain('stress');
   });
 
-  it('心率去重、按时序排列，且样本落在记录区间内', () => {
+  it('心率一条样本一条记录：去重、按时序排列，重复时间戳保留较大值', () => {
     const group = normalizeGadgetbridgeBundle(bundle()).find(
       (item) => item.recordType === 'heart_rate',
     );
     expect(group).toBeDefined();
-    const record = group!.records[0];
-    expect(record.record_type).toBe('heart_rate');
-    const samples = (record.data as { samples: { time: string; beats_per_minute: number }[] })
-      .samples;
+    expect(group!.records.length).toBe(2);
+    expect(group!.records.map((record) => record.external_record_id)).toEqual([
+      `gb-hr-${Date.parse('2026-09-06T00:00:00.000Z') / 1000}`,
+      `gb-hr-${Date.parse('2026-09-06T01:00:00.000Z') / 1000}`,
+    ]);
+
+    const samples = group!.records.map((record) => {
+      const data = record.data as { samples: { time: string; beats_per_minute: number }[] };
+      expect(data.samples.length).toBe(1);
+      expect(record.start_time).toBe(record.end_time);
+      expect(record.start_time).toBe(data.samples[0].time);
+      return data.samples[0];
+    });
+
     expect(samples.map((sample) => sample.time)).toEqual([
       '2026-09-06T00:00:00.000Z',
       '2026-09-06T01:00:00.000Z',
     ]);
     // 同一时间戳保留较大的有效值
     expect(samples[1].beats_per_minute).toBe(70);
-    for (const sample of samples) {
-      expect(sample.time >= record.start_time).toBe(true);
-      expect(sample.time <= record.end_time).toBe(true);
+  });
+
+  it('心率不会跨天堆积成单条超大记录（后端读最新记录时有 20000 字符上限）', () => {
+    const many = bundle({
+      heartRates: Array.from({ length: 2400 }, (_, index) => ({
+        timestamp: new Date(Date.UTC(2026, 8, 6) + index * 8 * 60 * 1000).toISOString(),
+        heartRate: 60 + (index % 40),
+      })),
+    });
+    const records = normalizeGadgetbridgeBundle(many).find(
+      (item) => item.recordType === 'heart_rate',
+    )!.records;
+
+    expect(records.length).toBe(2400);
+    expect(new Set(records.map((record) => record.external_record_id)).size).toBe(2400);
+    for (const record of records) {
+      expect(JSON.stringify(record.data).length).toBeLessThan(200);
     }
   });
 

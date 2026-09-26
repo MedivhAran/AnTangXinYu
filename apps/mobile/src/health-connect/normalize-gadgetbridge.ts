@@ -1,6 +1,5 @@
 import type { WearableRecord } from '../api/types';
 import {
-  MAX_HEART_RATE_SAMPLES_PER_RECORD,
   type HealthBundle,
   type SleepSession,
 } from '../services/GadgetbridgeService';
@@ -16,9 +15,9 @@ import {
 //   ✗ 缺 record_type 和 records
 //   ✗ 一次请求混发多种 record_type，后端要求每次只能一种
 //
-// 现在的做法：把每类指标转成「一条记录一段区间」的形状，再交给
-// ApiClient.importWearableRecords 分批上传（每次 ≤1000 条记录）。
-// 这样幂等、可重试、也不会再触发 422。
+// 现在的做法：点测量（心率、血氧、静息心率）一条样本一条记录，累加量
+// （步数、距离）按区间分桶，再交给 ApiClient.importWearableRecords 分批
+// 上传（每次 ≤1000 条记录）。这样幂等、可重试、也不会再触发 422。
 // =====================================================================
 
 /** 后端 WearableImportRequest.records 的硬上限。 */
@@ -117,25 +116,29 @@ export function dedupeHeartRates(
     .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
 }
 
+/**
+ * 心率一条样本一条记录，与血氧、静息心率保持一致。
+ *
+ * 不能把多天样本合并成一条长记录：后端 read_wearable_data 的 latest 视图每种
+ * 类型只返回「一条最新记录」，而工具结果有 20000 字符的硬上限
+ * （api/src/antang_api/tools/wearable.py:22）。实测 14 天 2321 个样本合成一条
+ * 记录时 data 字段有 134743 字符，模型一查最新心率就会整轮失败。
+ */
 function heartRateRecords(bundle: HealthBundle): WearableRecord[] {
-  const samples = dedupeHeartRates(bundle.heartRates);
-  const records: WearableRecord[] = [];
-  for (let index = 0; index < samples.length; index += MAX_HEART_RATE_SAMPLES_PER_RECORD) {
-    const chunk = samples.slice(index, index + MAX_HEART_RATE_SAMPLES_PER_RECORD);
-    const startTime = chunk[0].timestamp;
-    const endTime = chunk[chunk.length - 1].timestamp;
-    records.push({
-      ...base(`gb-hr-${epochSeconds(startTime)}-${epochSeconds(endTime)}`, startTime, endTime, bundle),
-      record_type: 'heart_rate',
-      data: {
-        samples: chunk.map((sample) => ({
-          time: sample.timestamp,
-          beats_per_minute: sample.heartRate,
-        })),
-      },
-    });
-  }
-  return records;
+  return dedupeHeartRates(bundle.heartRates).map((sample) => ({
+    ...base(
+      `gb-hr-${epochSeconds(sample.timestamp)}`,
+      sample.timestamp,
+      sample.timestamp,
+      bundle,
+    ),
+    record_type: 'heart_rate' as const,
+    data: {
+      samples: [
+        { time: sample.timestamp, beats_per_minute: sample.heartRate },
+      ],
+    },
+  }));
 }
 
 function restingHeartRateRecords(bundle: HealthBundle): WearableRecord[] {
