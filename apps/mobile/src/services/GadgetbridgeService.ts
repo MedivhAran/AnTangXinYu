@@ -1,4 +1,3 @@
-import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import * as SQLite from 'expo-sqlite';
@@ -747,22 +746,5 @@ export async function pickAndParseHealth(): Promise<ParsedHealth> {
       message: error instanceof Error ? error.message : '解析数据库失败',
       fileName,
     };
-  }
-}
-
-// ===== 外部目录扫描（保留原有能力）=====
-function getExportDir(): string {
-  const base = (FileSystem as unknown as { ExternalDirectoryPath?: string })
-    .ExternalDirectoryPath;
-  return `${base ?? '/storage/emulated/0'}/Gadgetbridge/files/export`;
-}
-
-export async function isGadgetbridgeExportAvailable(): Promise<boolean> {
-  if (Platform.OS !== 'android') return false;
-  try {
-    const info = await FileSystem.getInfoAsync(getExportDir());
-    return info.exists;
-  } catch {
-    return false;
   }
 }

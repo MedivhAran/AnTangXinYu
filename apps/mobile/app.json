@@ -2,7 +2,7 @@
   "expo": {
     "name": "安糖心语",
     "slug": "antang",
-    "owner": "ayagoz1",
+    "owner": "wocky528",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -37,6 +37,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d04128ba-7ddd-4df4-a952-d52a8a9bea68"
+      }
     },
     "plugins": [
       "expo-secure-store",
@@ -84,11 +89,6 @@
       ],
       "expo-status-bar",
       "expo-sqlite"
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "00534b36-3ddd-47ab-8a74-ae247356600d"
-      }
-    }
+    ]
   }
 }
