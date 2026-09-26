@@ -152,9 +152,15 @@ class WearableRecordBase(StrictApiModel):
     end_time: datetime
     start_zone_offset_seconds: Annotated[int, Field(ge=-64800, le=64800)] | None = None
     end_zone_offset_seconds: Annotated[int, Field(ge=-64800, le=64800)] | None = None
-    # 首版只接收目标设备实际使用的 Google Play 版 Zepp 数据源。
-    # 这同时避免把手机或其他 App 的累计步数、距离再次相加。
-    source_package: Literal["com.huami.watch.hmwatchmanager"]
+    # 允许的来源是同一只华为手环的两个读取通道：
+    #   1. Google Play 版 Zepp 经 Health Connect 写入。
+    #   2. Gadgetbridge 直读手环数据库后手动导出（华为机型没有 Health Connect 通路）。
+    # 其余来源仍然拒绝，避免把手机或其他 App 的累计步数、距离再次相加。
+    # 心率规则对这两个通道一视同仁：两者写入的都是手环本机记录。
+    source_package: Literal[
+        "com.huami.watch.hmwatchmanager",
+        "nodomain.freeyourgadget.gadgetbridge",
+    ]
     recording_method: Annotated[int, Field(ge=0)] | None = None
     device: WearableDevice | None = None
     source_last_modified_at: datetime

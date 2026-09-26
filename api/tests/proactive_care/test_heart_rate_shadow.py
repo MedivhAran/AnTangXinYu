@@ -28,6 +28,7 @@ async def _heart_rate_task(
     age_years: int | None = 30,
     context_complete: bool = True,
     external_id: str | None = None,
+    source_package: str = "com.huami.watch.hmwatchmanager",
     existing_user: User | None = None,
 ) -> tuple[ProactiveCareTask, WearableObservation]:
     suffix = uuid4().hex[:12]
@@ -74,7 +75,7 @@ async def _heart_rate_task(
         end_zone_offset_seconds=28800,
         data={"samples": samples},
         data_hash=uuid4().hex + uuid4().hex,
-        source_package="com.huami.watch.hmwatchmanager",
+        source_package=source_package,
         recording_method=2,
         device={"manufacturer": "Amazfit", "model": "Active 2"},
         source_last_modified_at=received_at,
@@ -474,3 +475,28 @@ async def test_deleted_source_does_not_absorb_a_later_candidate(
     assert first.decision == "candidate"
     assert later.reason == "candidate"
     assert later.duplicate_of_task_id is None
+
+
+async def test_gadgetbridge_source_is_evaluated_and_recorded_in_evidence(
+    db_session: AsyncSession,
+) -> None:
+    """Gadgetbridge 与 Zepp 读的是同一只手环，规则必须同等对待并如实标注来源。"""
+
+    received_at = datetime(2026, 7, 18, 10, 0, 30, tzinfo=timezone.utc)
+    task, _ = await _heart_rate_task(
+        db_session,
+        received_at=received_at,
+        values=[110] * 30,
+        source_package="nodomain.freeyourgadget.gadgetbridge",
+    )
+
+    result = await evaluate_heart_rate_shadow(
+        db_session,
+        task=task,
+        timezone_name="Asia/Shanghai",
+    )
+
+    assert result.decision == "candidate"
+    assert result.direction == "high"
+    assert result.source_package == "nodomain.freeyourgadget.gadgetbridge"
+    assert task.health_evidence == result.evidence()

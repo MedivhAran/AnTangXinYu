@@ -1,6 +1,6 @@
 import json
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Self, cast
 from uuid import UUID, uuid4
 
@@ -850,3 +850,37 @@ def test_wearable_tool_request_rejects_mixed_or_unbounded_queries() -> None:
         )
     )
     assert "已经同步到服务器的历史设备观测" in tool.description
+
+
+def test_wearable_tool_defaults_missing_record_types_to_every_type() -> None:
+    """模型问「某一天怎么样」时通常只给时间范围，省略类型必须合法。
+
+    range 和 daily_summary 曾经把 record_types 当必填，模型漏传时工具直接
+    抛错，而工具报错会让整轮对话失败（见 tool_middleware 的不可恢复设计）。
+    """
+
+    now = datetime.now(timezone.utc)
+    window = {"start": now - timedelta(days=1), "end": now}
+
+    summary_request = WearableReadRequest(view="daily_summary", **window)
+    assert summary_request.record_types is None
+    assert wearable_tools.requested_record_types(summary_request) == list(
+        WearableRecordType
+    )
+
+    range_request = WearableReadRequest(view="range", limit=50, **window)
+    assert wearable_tools.requested_record_types(range_request) == list(
+        WearableRecordType
+    )
+
+    explicit_request = WearableReadRequest(
+        view="daily_summary",
+        record_types=[WearableRecordType.SLEEP],
+        **window,
+    )
+    assert wearable_tools.requested_record_types(explicit_request) == [
+        WearableRecordType.SLEEP
+    ]
+
+    schema = WearableReadRequest.model_json_schema()
+    assert "record_types" not in schema.get("required", [])

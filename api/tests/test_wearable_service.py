@@ -252,6 +252,35 @@ def test_wearable_request_is_strict() -> None:
         WearableImportRequest.model_validate(base)
 
 
+def test_wearable_import_accepts_gadgetbridge_source() -> None:
+    """华为机型没有 Health Connect 通路，Gadgetbridge 手动导入用自己的包名。"""
+
+    now = datetime.now(timezone.utc)
+    request = WearableImportRequest.model_validate(
+        {
+            "client_sync_id": str(uuid4()),
+            "record_type": "heart_rate",
+            "records": [
+                {
+                    "record_type": "heart_rate",
+                    "external_record_id": "gadgetbridge-heart-rate-1",
+                    "start_time": now.isoformat(),
+                    "end_time": now.isoformat(),
+                    "source_package": "nodomain.freeyourgadget.gadgetbridge",
+                    "recording_method": 2,
+                    "device": {"manufacturer": "Huawei", "model": "Kimi-B19FB"},
+                    "source_last_modified_at": now.isoformat(),
+                    "data": {"samples": [{"time": now.isoformat(), "beats_per_minute": 62}]},
+                }
+            ],
+        }
+    )
+    assert (
+        request.records[0].source_package
+        == "nodomain.freeyourgadget.gadgetbridge"
+    )
+
+
 def test_wearable_import_declares_one_record_type_and_heart_context() -> None:
     now = datetime.now(timezone.utc)
     heart_rate = {

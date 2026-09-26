@@ -42,7 +42,7 @@ class WearableReadRequest(BaseModel):
     ]
     record_types: Annotated[
         list[WearableRecordType] | None,
-        Field(description="要读取的设备数据类型；latest 可省略，表示读取所有类型。"),
+        Field(description="要读取的设备数据类型；省略表示读取所有类型。"),
     ] = None
     start: Annotated[
         datetime | None,
@@ -79,8 +79,8 @@ class WearableReadRequest(BaseModel):
                 raise ValueError("detail only accepts observation_id")
             return self
 
-        if not self.record_types or self.start is None or self.end is None:
-            raise ValueError(f"{self.view} requires record_types, start and end")
+        if self.start is None or self.end is None:
+            raise ValueError(f"{self.view} requires start and end")
         if self.observation_id is not None:
             raise ValueError(f"{self.view} does not accept observation_id")
         if self.view == "range" and self.limit is None:
@@ -88,6 +88,12 @@ class WearableReadRequest(BaseModel):
         if self.view == "daily_summary" and self.limit is not None:
             raise ValueError("daily_summary does not accept limit")
         return self
+
+
+def requested_record_types(request: WearableReadRequest) -> list[WearableRecordType]:
+    """range 和 daily_summary 要读取的记录类型；省略表示全部类型。"""
+
+    return request.record_types or list(WearableRecordType)
 
 
 def build_wearable_read_tool(
@@ -105,7 +111,8 @@ def build_wearable_read_tool(
         用户询问自己的活动、睡眠、心率、血氧、呼吸频率、体重或其他设备
         数据时使用。结果不是手环的实时连接，不能用于读取第三人的数据，也不
         用于回答普通健康知识问题。趋势优先使用 daily_summary；只有需要具体
-        样本时才使用带明确时间范围和数量上限的 range。
+        样本时才使用带明确时间范围和数量上限的 range。询问某一天的情况时，
+        daily_summary 只给 start 和 end 即可，省略 record_types 表示所有类型。
         """
 
         async with session_factory() as session:
@@ -130,7 +137,10 @@ def build_wearable_read_tool(
                     "observation": observation.model_dump(mode="json"),
                 }
             else:
-                record_types = cast(list[WearableRecordType], request.record_types)
+                # 省略 record_types 表示读取所有类型。latest 早就是这样，
+                # range 和 daily_summary 保持一致：模型最常见的调用形态
+                # 就是只给时间范围，而工具报错会让整轮对话直接失败。
+                record_types = requested_record_types(request)
                 start = cast(datetime, request.start)
                 end = cast(datetime, request.end)
 
