@@ -19,6 +19,14 @@ import * as SQLite from 'expo-sqlite';
 //    压力在 HUAWEI_STRESS_SAMPLE。含 SLEEP/DEEP_SLEEP/REM_SLEEP 三列的是
 //    HUAMI_EXTENDED_ACTIVITY_SAMPLE（小米手环用），华为机型里 0 行。
 //
+//    导出库会给 Gadgetbridge 支持的**每个厂商**都建一张睡眠/压力表，170 张里
+//    只有配对手环那一族有数据。所以查表必须限定在活动表的厂商家族内，否则按
+//    后缀匹配会先撞上 CMF_/COLMI_/XIAOMI_ 这些空表——实测就是这么把 2995 条
+//    睡眠阶段和 252 条压力全部读丢的。
+//
+//    还有一处单位陷阱：睡眠与压力表的 TIMESTAMP 是**毫秒**，活动表是秒，
+//    三张表各不相同。单位必须按每张表自己的 MAX(TIMESTAMP) 判定。
+//
 // 3) 单位实测：DISTANCE 是米（0.730 米/步），CALORIES 是小卡（要 /1000），
 //    SPO 是 0~100 的百分比。
 //
@@ -238,14 +246,38 @@ async function findActivityTable(
   return null;
 }
 
-/** 找第一张表名匹配且真的含指定列的表。 */
+/**
+ * 活动表所属的厂商家族前缀，例如 HUAWEI_ACTIVITY_SAMPLE -> HUAWEI_。
+ * 表名不符合这个命名习惯时返回 null，表示不做家族限定。
+ */
+export function activityFamily(table: string): string | null {
+  const marker = '_ACTIVITY_SAMPLE';
+  if (!table.toUpperCase().endsWith(marker)) return null;
+  return `${table.slice(0, table.length - marker.length)}_`;
+}
+
+/** 该表的 TIMESTAMP 记的是秒还是毫秒，按它自己的最大时间戳判定。 */
+async function timeScale(db: SQLite.SQLiteDatabase, table: string): Promise<number> {
+  const row = await db.getFirstAsync<{ MAX_TS: number | null }>(
+    `SELECT MAX(TIMESTAMP) AS MAX_TS FROM ${table}`,
+  );
+  const maxTimestamp = numberOrNull(row?.MAX_TS);
+  return maxTimestamp !== null && maxTimestamp > 1e12 ? 1000 : 1;
+}
+
+/**
+ * 找第一张表名匹配且真的含指定列的表。family 非空时只在同一厂商家族里找：
+ * 导出库含所有厂商的同名空表，不限定家族会读到空表并当成"没有这类数据"。
+ */
 async function findTable(
   db: SQLite.SQLiteDatabase,
   tables: string[],
+  family: string | null,
   pattern: RegExp,
   requiredColumn: string,
 ): Promise<string | null> {
   for (const name of tables) {
+    if (family !== null && !name.startsWith(family)) continue;
     if (!pattern.test(name)) continue;
     if ((await tableColumns(db, name)).has(requiredColumn)) return name;
   }
@@ -431,11 +463,14 @@ type SleepStatsRow = Record<string, number | string | null>;
 /**
  * 把"每分钟一个阶段点"合并成连续阶段区间，再按间隔切成一次睡眠，
  * 并用同一夜的统计行补充睡眠评分、深睡时长和最低血氧。
+ *
+ * stageScale / statsScale 是两张表各自的秒/毫秒系数：华为这三张表的单位并不一致。
  */
 export function buildSleepSessions(
   stageRows: SleepStageRow[],
   statsRows: SleepStatsRow[],
-  scale: number,
+  stageScale: number,
+  statsScale: number,
 ): SleepSession[] {
   const points: { seconds: number; stage: SleepStageName }[] = [];
   for (const row of stageRows) {
@@ -444,7 +479,8 @@ export function buildSleepSessions(
     if (rawStage === null || rawSeconds === null || rawSeconds <= 0) continue;
     const stage = HUAWEI_SLEEP_STAGE_MAP[rawStage];
     if (stage === undefined) continue;
-    points.push({ seconds: Math.floor(rawSeconds / scale), stage });
+    // 统一换算成真实秒，后面的间隔判断与 toIso 都只认秒
+    points.push({ seconds: Math.floor(rawSeconds / stageScale), stage });
   }
   points.sort((left, right) => left.seconds - right.seconds);
   if (points.length === 0) return [];
@@ -479,7 +515,7 @@ export function buildSleepSessions(
     }
     const lastSeconds = group[group.length - 1].seconds;
     const lastStart = toIso(runStart);
-    const lastEnd = toIso(lastSeconds + SLEEP_SAMPLE_SECONDS * scale);
+    const lastEnd = toIso(lastSeconds + SLEEP_SAMPLE_SECONDS);
     if (lastStart !== '' && lastEnd > lastStart) {
       stages.push({ startTime: lastStart, endTime: lastEnd, stage: runStage });
     }
@@ -491,7 +527,7 @@ export function buildSleepSessions(
     for (const stats of statsRows) {
       const rawBed = numberOrNull(stats.BED_TIME) ?? numberOrNull(stats.TIMESTAMP);
       if (rawBed === null || rawBed <= 0) continue;
-      const offset = Math.abs(Math.floor(rawBed / scale) - sessionStartSeconds);
+      const offset = Math.abs(Math.floor(rawBed / statsScale) - sessionStartSeconds);
       if (offset < bestOffset && offset <= SLEEP_STATS_MATCH_WINDOW_SECONDS) {
         bestOffset = offset;
         matched = stats;
@@ -516,32 +552,35 @@ export function buildSleepSessions(
 
 async function readSleep(
   db: SQLite.SQLiteDatabase,
+  family: string | null,
   tables: string[],
-  scale: number,
 ): Promise<SleepSession[]> {
-  const stageTable = await findTable(db, tables, /SLEEP_STAGE_SAMPLE/i, 'STAGE');
+  const stageTable = await findTable(db, tables, family, /SLEEP_STAGE_SAMPLE/i, 'STAGE');
   if (stageTable === null) return [];
 
   const stageRows = await db.getAllAsync<SleepStageRow>(
     `SELECT TIMESTAMP, STAGE FROM ${stageTable} ORDER BY TIMESTAMP ASC`,
   );
+  const stageScale = await timeScale(db, stageTable);
 
-  const statsTable = await findTable(db, tables, /SLEEP_STATS_SAMPLE/i, 'SLEEP_SCORE');
-  const statsRows =
-    statsTable === null
-      ? []
-      : await db.getAllAsync<SleepStatsRow>(
-          `SELECT * FROM ${statsTable} ORDER BY TIMESTAMP ASC`,
-        );
+  const statsTable = await findTable(db, tables, family, /SLEEP_STATS_SAMPLE/i, 'SLEEP_SCORE');
+  if (statsTable === null) {
+    return buildSleepSessions(stageRows, [], stageScale, 1);
+  }
 
-  return buildSleepSessions(stageRows, statsRows, scale);
+  const statsRows = await db.getAllAsync<SleepStatsRow>(
+    `SELECT * FROM ${statsTable} ORDER BY TIMESTAMP ASC`,
+  );
+  const statsScale = await timeScale(db, statsTable);
+  return buildSleepSessions(stageRows, statsRows, stageScale, statsScale);
 }
 
 async function readStress(
   db: SQLite.SQLiteDatabase,
+  family: string | null,
   tables: string[],
 ): Promise<StressRecord[]> {
-  const table = await findTable(db, tables, /STRESS_SAMPLE/i, 'STRESS');
+  const table = await findTable(db, tables, family, /STRESS_SAMPLE/i, 'STRESS');
   if (table === null) return [];
   const rows = await db.getAllAsync<{ TIMESTAMP: number; STRESS: number }>(
     `SELECT TIMESTAMP, STRESS FROM ${table} WHERE STRESS >= 0 ORDER BY TIMESTAMP ASC`,
@@ -663,14 +702,8 @@ export async function parseGadgetbridgeDb(
     }
 
     const columns = await tableColumns(db, table);
-    const maxTimestamp = numberOrNull(
-      (
-        await db.getFirstAsync<{ MAX_TS: number | null }>(
-          `SELECT MAX(TIMESTAMP) AS MAX_TS FROM ${table}`,
-        )
-      )?.MAX_TS,
-    );
-    const scale = maxTimestamp !== null && maxTimestamp > 1e12 ? 1000 : 1;
+    const scale = await timeScale(db, table);
+    const family = activityFamily(table);
     const context: ActivityContext = { db, table, columns, scale };
 
     const [heartRates, spo2, restingHeartRates, buckets, daily, sleep, stress, device] =
@@ -680,8 +713,8 @@ export async function parseGadgetbridgeDb(
         readRestingHeartRates(context),
         readBuckets(context),
         readDaily(context),
-        readSleep(db, tables, scale),
-        readStress(db, tables),
+        readSleep(db, family, tables),
+        readStress(db, family, tables),
         readDevice(db, tables),
       ]);
 
