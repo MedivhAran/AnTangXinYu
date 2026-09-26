@@ -52,7 +52,9 @@ import { MessageSources } from './MessageSources';
 import { HealthProfileCards } from '../health-profile/health-profile-cards';
 import { useHealthProfileCards } from '../health-profile/use-health-profile-cards';
 import { useHealthConnect } from '../health-connect/use-health-connect';
+import { useGadgetbridge } from '../health-connect/useGadgetbridge';
 import { HealthOverviewScreen } from '../health-overview';
+import { HealthDashboardScreen } from '../health/HealthDashboardScreen';
 import { AppMenu, type ConversationAnchor } from '../navigation/app-menu';
 import { useNotifications } from '../notifications/use-notifications';
 import { CareSettingsModal } from '../proactive-care/care-settings-modal';
@@ -101,6 +103,8 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [showCareSettings, setShowCareSettings] = useState(false);
   const [showHealthOverview, setShowHealthOverview] = useState(false);
+  // ===== 新增：健康看板 =====
+  const [showDashboard, setShowDashboard] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [showReportPicker, setShowReportPicker] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -117,6 +121,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   );
   const healthProfileCards = useHealthProfileCards(api);
   const healthConnect = useHealthConnect(user.id, api);
+  const gadgetbridge = useGadgetbridge(api);
   const refreshHealthProfileCards = healthProfileCards.refresh;
   const getAttachmentImageSource = useCallback(
     (attachmentId: string) => api.getChatAttachmentImageSource(attachmentId),
@@ -316,7 +321,8 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         dispatch({ type: 'transport-failed', message: errorMessage(error) });
       }
     } finally {
-      if (streamController.current === controller) streamController.current = null;
+      if (streamController.current === controller)
+        streamController.current = null;
       await refreshHealthProfileCards();
     }
   }
@@ -580,6 +586,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         </View>
       </SafeAreaView>
 
+      {/* ===== Health Connect 横幅（保留原有） ===== */}
       {!healthConnect.connected || healthConnect.error !== null ? (
         <Pressable
           accessibilityRole="button"
@@ -598,6 +605,50 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           </Text>
         </Pressable>
       ) : null}
+
+      {/* ===== Gadgetbridge 独立横幅 ===== */}
+      <Pressable
+        accessibilityRole="button"
+        disabled={gadgetbridge.checking || gadgetbridge.syncing}
+        onPress={() => {
+          if (gadgetbridge.connected) {
+            void gadgetbridge.sync();
+          } else {
+            void gadgetbridge.connect();
+          }
+        }}
+        style={({ pressed }) => [
+          styles.gadgetbridgeNotice,
+          (gadgetbridge.checking || gadgetbridge.syncing) &&
+          styles.gadgetbridgeNoticeDisabled,
+          pressed &&
+          !gadgetbridge.checking &&
+          !gadgetbridge.syncing &&
+          styles.gadgetbridgeNoticePressed,
+        ]}
+      >
+        <View style={styles.gadgetbridgeNoticeContent}>
+          <Text style={styles.gadgetbridgeNoticeTitle}>📡 Gadgetbridge 手环</Text>
+          <Text style={styles.gadgetbridgeNoticeText} numberOfLines={1}>
+            {gadgetbridge.checking
+              ? '正在检查手环数据...'
+              : gadgetbridge.syncing
+                ? '⏳ 正在同步...'
+                : gadgetbridge.error
+                  ? `⚠️ ${gadgetbridge.error}`
+                  : gadgetbridge.connected
+                    ? `已连接，${gadgetbridge.heartRateCount || 0} 条心率记录`
+                    : '点击连接，从 Gadgetbridge 导入手环数据'}
+          </Text>
+        </View>
+        <Text style={styles.gadgetbridgeNoticeAction}>
+          {gadgetbridge.checking || gadgetbridge.syncing
+            ? '...'
+            : gadgetbridge.connected
+              ? '同步'
+              : '连接'}
+        </Text>
+      </Pressable>
 
       {state.error === null ? null : (
         <Pressable
@@ -681,9 +732,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             />
           </View>
         }
-        onRefresh={
-          state.pendingRequestId === null ? refreshLatest : undefined
-        }
+        onRefresh={state.pendingRequestId === null ? refreshLatest : undefined}
         onScroll={({ nativeEvent }) => {
           const distanceFromEnd =
             nativeEvent.contentSize.height -
@@ -725,7 +774,11 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
                 pressed && styles.quickActionPressed,
               ]}
             >
-              <AppIcon color={colors.primaryPressed} icon={FileChartLineIcon} size={20} />
+              <AppIcon
+                color={colors.primaryPressed}
+                icon={FileChartLineIcon}
+                size={20}
+              />
               <Text style={styles.quickActionText}>报告解读</Text>
             </Pressable>
             <Pressable
@@ -738,7 +791,11 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
                 pressed && styles.quickActionPressed,
               ]}
             >
-              <AppIcon color={colors.primaryPressed} icon={FolderHeartIcon} size={20} />
+              <AppIcon
+                color={colors.primaryPressed}
+                icon={FolderHeartIcon}
+                size={20}
+              />
               <Text style={styles.quickActionText}>健康档案</Text>
             </Pressable>
             <Pressable
@@ -787,10 +844,10 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
               uploadingAttachment
                 ? '正在上传附件…'
                 : state.pendingRequestId !== null
-                ? '正在回复…'
-                : state.historyLoading
-                  ? '正在读取对话…'
-                  : '输入健康问题或说说近况…'
+                  ? '正在回复…'
+                  : state.historyLoading
+                    ? '正在读取对话…'
+                    : '输入健康问题或说说近况…'
             }
             placeholderTextColor={colors.faint}
             style={styles.input}
@@ -803,8 +860,9 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             accessibilityRole="button"
             disabled={
               state.pendingRequestId === null &&
-              (draft.trim().length === 0 && attachment === null ||
-                state.historyLoading || uploadingAttachment)
+              ((draft.trim().length === 0 && attachment === null) ||
+                state.historyLoading ||
+                uploadingAttachment)
             }
             onPress={
               state.pendingRequestId !== null
@@ -814,9 +872,10 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
             style={({ pressed }) => [
               styles.sendButton,
               state.pendingRequestId === null &&
-                (draft.trim().length === 0 && attachment === null ||
-                  state.historyLoading || uploadingAttachment) &&
-                styles.sendButtonDisabled,
+              ((draft.trim().length === 0 && attachment === null) ||
+                state.historyLoading ||
+                uploadingAttachment) &&
+              styles.sendButtonDisabled,
               pressed && styles.sendButtonPressed,
             ]}
           >
@@ -900,6 +959,13 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
         />
       </Modal>
 
+      {/* ===== 新增：健康看板 Modal ===== */}
+      <HealthDashboardScreen
+        visible={showDashboard}
+        onClose={() => setShowDashboard(false)}
+        bundle={gadgetbridge.lastBundle}
+      />
+
       <AppMenu
         conversations={conversationAnchors}
         onClose={() => setShowMenu(false)}
@@ -911,12 +977,25 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
           setShowMenu(false);
           setShowCareSettings(true);
         }}
+        // ===== 新增：健康看板入口 =====
+        onOpenDashboard={() => {
+          setShowMenu(false);
+          setShowDashboard(true);
+        }}
         onSelectConversation={(messageId) => {
           setTargetMessageId(messageId);
           setShowMenu(false);
         }}
         username={user.username}
         visible={showMenu}
+        gadgetbridgeChecking={gadgetbridge.checking}
+        gadgetbridgeConnected={gadgetbridge.connected}
+        gadgetbridgeSyncing={gadgetbridge.syncing}
+        gadgetbridgeError={gadgetbridge.error}
+        gadgetbridgeProgress={gadgetbridge.progress}
+        gadgetbridgeLastSyncedAt={gadgetbridge.lastSyncedAt}
+        onGadgetbridgeConnect={gadgetbridge.connect}
+        onGadgetbridgeSync={gadgetbridge.sync}
       />
 
       <ExpoStatusBar style="dark" />
@@ -982,6 +1061,36 @@ const styles = StyleSheet.create({
     color: colors.primaryPressed,
     fontFamily: typefaces.sansMedium,
     fontSize: 11,
+  },
+  gadgetbridgeNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    backgroundColor: '#F0F8FC',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#B8D9E8',
+  },
+  gadgetbridgeNoticeDisabled: { opacity: 0.5 },
+  gadgetbridgeNoticePressed: { opacity: 0.7 },
+  gadgetbridgeNoticeContent: { flex: 1, gap: 1 },
+  gadgetbridgeNoticeTitle: {
+    color: colors.ink,
+    fontFamily: typefaces.sansMedium,
+    fontSize: 12,
+  },
+  gadgetbridgeNoticeText: {
+    color: colors.muted,
+    fontFamily: typefaces.sans,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  gadgetbridgeNoticeAction: {
+    color: '#0A7C6B',
+    fontFamily: typefaces.sansMedium,
+    fontSize: 12,
   },
   errorBanner: {
     flexDirection: 'row',
@@ -1093,7 +1202,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.md,
   },
-  dateRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.line },
+  dateRule: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.line,
+  },
   dateText: {
     color: colors.faint,
     fontFamily: typefaces.sansMedium,

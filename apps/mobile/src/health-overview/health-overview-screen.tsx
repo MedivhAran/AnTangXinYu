@@ -132,10 +132,20 @@ function formatDuration(milliseconds: number): string {
   return `${hours}小时${remainingMinutes}分钟`;
 }
 
-function sourceLabel(sourcePackage: string): string {
-  return sourcePackage === 'com.huami.watch.hmwatchmanager'
-    ? 'Zepp · Health Connect'
-    : 'Health Connect';
+/**
+ * 观测来源包名 → 界面上给患者看的名称。
+ *
+ * 之前只判断 Zepp，其余一律显示「Health Connect」，于是 Gadgetbridge 直读
+ * 手环进来的数据也被标成 Health Connect——华为机型根本没有这条通路，标注是错的。
+ * 未知来源直接显示包名，不猜。
+ */
+const SOURCE_LABELS: Record<string, string> = {
+  'com.huami.watch.hmwatchmanager': 'Zepp · Health Connect',
+  'nodomain.freeyourgadget.gadgetbridge': 'Gadgetbridge',
+};
+
+export function sourceLabel(sourcePackage: string): string {
+  return SOURCE_LABELS[sourcePackage] ?? sourcePackage;
 }
 
 type ProfileRow = {

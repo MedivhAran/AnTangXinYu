@@ -10,7 +10,7 @@ import { act, create } from 'react-test-renderer';
 
 import { ApiError, type ApiClient } from '../api/client';
 import type { HealthProfile } from '../api/types';
-import { HealthOverviewScreen } from './health-overview-screen';
+import { HealthOverviewScreen, sourceLabel } from './health-overview-screen';
 
 jest.mock('expo-crypto', () => ({
   randomUUID: jest.fn(() => '019b9999-9999-7999-8999-999999999999'),
@@ -713,5 +713,13 @@ describe('HealthOverviewScreen', () => {
     expect(randomUUIDMock).toHaveBeenCalledTimes(1);
     expect(tree!.root.findByProps({ children: '女性' })).toBeTruthy();
     act(() => tree!.unmount());
+  });
+});
+
+describe('sourceLabel', () => {
+  test('如实区分 Gadgetbridge 直读与 Zepp/Health Connect，未知来源显示包名', () => {
+    expect(sourceLabel('com.huami.watch.hmwatchmanager')).toBe('Zepp · Health Connect');
+    expect(sourceLabel('nodomain.freeyourgadget.gadgetbridge')).toBe('Gadgetbridge');
+    expect(sourceLabel('com.example.other-health-app')).toBe('com.example.other-health-app');
   });
 });

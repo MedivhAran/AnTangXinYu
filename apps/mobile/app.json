@@ -25,7 +25,8 @@
         "android.permission.health.READ_HEART_RATE",
         "android.permission.health.READ_SLEEP",
         "android.permission.health.READ_OXYGEN_SATURATION",
-        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
+        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+        "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#F5F9F8",
@@ -86,7 +87,8 @@
           "backgroundColor": "#F5F9F8"
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-sqlite"
     ]
   }
 }
