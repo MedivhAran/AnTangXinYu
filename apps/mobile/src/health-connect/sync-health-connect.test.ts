@@ -199,7 +199,7 @@ describe('syncHealthConnect', () => {
     };
     const imports: Parameters<WearableImporter['importWearableRecords']>[] = [];
     const importer: WearableImporter = {
-      listHealthConnectRecordIds: jest.fn(),
+      listHealthConnectRecordIds: jest.fn(async () => ({ ids: [], nextAfter: null })),
       async importWearableRecords(...args) {
         imports.push(args);
         events.push(`import:${args[3][0]?.record_type ?? args[1]}`);
@@ -361,7 +361,7 @@ describe('syncHealthConnect', () => {
     );
   });
 
-  test('marks old server records deleted when the complete phone history is empty', async () => {
+  test('reconciles old server records after reinstall removes the local cursor', async () => {
     const gateway = {
       getChanges: jest.fn(async (recordType: SupportedHealthConnectRecordType, token?: string) => ({
         upsertionChanges: [], deletionChanges: [],
@@ -373,7 +373,7 @@ describe('syncHealthConnect', () => {
       readRecords: jest.fn(async () => ({ records: [] })),
     } as unknown as HealthConnectGateway;
     const tokenStore = {
-      loadTokens: jest.fn(async () => allTokensExcept()),
+      loadTokens: jest.fn(async () => allTokensExcept('ExerciseSession')),
       saveToken: jest.fn(),
     } as unknown as HealthConnectTokenStore;
     const importer = {
@@ -386,6 +386,7 @@ describe('syncHealthConnect', () => {
     await syncHealthConnect(
       '019b1111-1111-7111-8111-111111111111', gateway, tokenStore, importer,
     );
+    expect(gateway.requestHistoryReadPermission).toHaveBeenCalledTimes(1);
     expect(importer.importWearableRecords).toHaveBeenCalledWith(
       expect.anything(), 'exercise', expect.anything(),
       [], ['existing-exercise'], undefined,

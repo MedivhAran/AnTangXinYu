@@ -430,16 +430,27 @@ export async function syncHealthConnect(
       completedContextTypes.has('SleepSession');
     const token = tokens[recordType];
     if (token === undefined) {
-      await initialSyncType(
-        userId,
-        recordType,
-        gateway,
-        tokenStore,
-        importer,
-        healthContextComplete,
-        now,
-        signal,
+      const serverPage = await importer.listHealthConnectRecordIds(
+        wearableRecordType[recordType], undefined, signal,
       );
+      if (serverPage.ids.length > 0) {
+        if (!recoverExpired) throw new HealthConnectTokenExpiredError(recordType, true);
+        await recoverExpiredType(
+          userId, recordType, gateway, tokenStore, importer,
+          healthContextComplete, now, signal,
+        );
+      } else {
+        await initialSyncType(
+          userId,
+          recordType,
+          gateway,
+          tokenStore,
+          importer,
+          healthContextComplete,
+          now,
+          signal,
+        );
+      }
     } else {
       try {
         await incrementalSyncType(
