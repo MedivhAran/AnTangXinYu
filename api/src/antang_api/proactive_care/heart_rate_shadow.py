@@ -27,6 +27,10 @@ _MAXIMUM_DELAY = timedelta(minutes=60)
 _EXERCISE_MARGIN = timedelta(minutes=30)
 _EPISODE_GAP = timedelta(minutes=30)
 _ZEPP_PACKAGE = "com.huami.watch.hmwatchmanager"
+_GADGETBRIDGE_PACKAGE = "nodomain.freeyourgadget.gadgetbridge"
+# 同一只华为手环的两个读取通道。两者写入的都是手环本机记录，记录形态一致，
+# 所以心率规则对它们一视同仁，不像步数、距离那样存在跨来源重复累加的风险。
+SOURCE_PACKAGES = (_ZEPP_PACKAGE, _GADGETBRIDGE_PACKAGE)
 
 HeartSample = tuple[datetime, int, WearableObservation]
 MinuteSamples = dict[datetime, list[HeartSample]]
@@ -56,7 +60,10 @@ class HeartRateShadowResult(BaseModel):
     age_years: int | None
     context_complete: bool
     timezone: str
-    source_package: Literal["com.huami.watch.hmwatchmanager"]
+    source_package: Literal[
+        "com.huami.watch.hmwatchmanager",
+        "nodomain.freeyourgadget.gadgetbridge",
+    ]
     recording_method: Literal[2]
     minute_aggregation: Literal["median"]
     direction: Literal["high", "low"] | None = None
@@ -122,10 +129,26 @@ def _samples(
     return values
 
 
+def _evaluated_source_package(
+    observations: list[WearableObservation],
+) -> str:
+    """本次评估所依据的心率记录来源，用于如实标注证据。
+
+    一次评估只允许出现一个来源：证据字段是单值，混用来源无法如实描述。
+    没有加载到任何记录时返回规则声明的基准来源，此时没有任何记录被评估。
+    """
+
+    packages = {observation.source_package for observation in observations}
+    if len(packages) > 1:
+        raise RuntimeError("心率评估混用了多个数据来源")
+    return packages.pop() if packages else _ZEPP_PACKAGE
+
+
 def _evaluate_window(
     *,
     age_years: int | None,
     timezone_name: str,
+    source_package: str,
     minute_samples: MinuteSamples,
     context_observations: list[WearableObservation],
     received_at: datetime,
@@ -141,7 +164,7 @@ def _evaluate_window(
         "age_years": age_years,
         "context_complete": context_complete,
         "timezone": timezone_name,
-        "source_package": _ZEPP_PACKAGE,
+        "source_package": source_package,
         "recording_method": _AUTOMATICALLY_RECORDED,
         "minute_aggregation": "median",
     }
@@ -459,6 +482,7 @@ async def evaluate_heart_rate_shadow(
     current_times: list[datetime] = []
     minute_samples: MinuteSamples = defaultdict(list)
     context_observations: list[WearableObservation] = []
+    source_package = _ZEPP_PACKAGE
     if (
         profile.age_years is not None
         and profile.age_years >= 18
@@ -477,6 +501,7 @@ async def evaluate_heart_rate_shadow(
                 )
             )
         )
+        source_package = _evaluated_source_package(current_observations)
         current_times = [sample[0] for sample in _samples(current_observations)]
         received_at = imported.created_at.astimezone(timezone.utc)
         if current_times and not any(
@@ -533,6 +558,7 @@ async def evaluate_heart_rate_shadow(
     result = _evaluate_window(
         age_years=profile.age_years,
         timezone_name=timezone_name,
+        source_package=source_package,
         minute_samples=minute_samples,
         context_observations=context_observations,
         received_at=imported.created_at,

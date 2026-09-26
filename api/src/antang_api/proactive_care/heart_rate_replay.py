@@ -27,6 +27,7 @@ from antang_api.models import (
 from antang_api.proactive_care.heart_rate_shadow import (
     HEART_RATE_RULE_ID,
     HEART_RATE_RULE_VERSION,
+    SOURCE_PACKAGES,
     HeartSample,
     HeartRateShadowResult,
     MinuteSamples,
@@ -35,8 +36,8 @@ from antang_api.proactive_care.heart_rate_shadow import (
     _EXERCISE_MARGIN,
     _MAXIMUM_DELAY,
     _WINDOW_MINUTES,
-    _ZEPP_PACKAGE,
     _evaluate_window,
+    _evaluated_source_package,
     _samples,
 )
 
@@ -48,6 +49,7 @@ ReplayHistory = tuple[
     dict[UUID, list[datetime]],
     dict[datetime, set[UUID]],
     list[WearableObservation],
+    str,
 ]
 
 
@@ -68,7 +70,7 @@ async def _load_history(
             select(WearableObservation).where(
                 WearableObservation.user_id == user_id,
                 WearableObservation.record_type == WearableRecordType.HEART_RATE,
-                WearableObservation.source_package == _ZEPP_PACKAGE,
+                WearableObservation.source_package.in_(SOURCE_PACKAGES),
                 WearableObservation.recording_method == _AUTOMATICALLY_RECORDED,
                 WearableObservation.deleted_at.is_(None),
                 WearableObservation.end_time >= history_start,
@@ -76,6 +78,7 @@ async def _load_history(
             )
         )
     )
+    source_package = _evaluated_source_package(heart_observations)
     context_observations = list(
         await session.scalars(
             select(WearableObservation).where(
@@ -128,6 +131,7 @@ async def _load_history(
         batch_times,
         import_ids_by_minute,
         context_observations,
+        source_package,
     )
 
 
@@ -240,6 +244,7 @@ async def replay_heart_rate_shadow(
         batch_times,
         import_ids_by_minute,
         context_observations,
+        source_package,
     ) = await _load_history(
         session,
         user_id=user_id,
@@ -280,6 +285,7 @@ async def replay_heart_rate_shadow(
             _evaluate_window(
                 age_years=profile.age_years,
                 timezone_name=timezone_name,
+                source_package=source_package,
                 minute_samples=minute_samples,
                 context_observations=context_observations,
                 received_at=received,
@@ -309,6 +315,7 @@ async def replay_heart_rate_shadow(
             _evaluate_window(
                 age_years=profile.age_years,
                 timezone_name=timezone_name,
+                source_package=source_package,
                 minute_samples=minute_samples,
                 context_observations=context_observations,
                 received_at=max(current_times),
@@ -327,6 +334,7 @@ async def replay_heart_rate_shadow(
                 _evaluate_window(
                     age_years=profile.age_years,
                     timezone_name=timezone_name,
+                    source_package=source_package,
                     minute_samples=minute_samples,
                     context_observations=context_observations,
                     received_at=max(current_times),

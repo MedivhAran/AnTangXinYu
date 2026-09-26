@@ -16,6 +16,81 @@ from antang_api.models import (
 from antang_api.proactive_care.heart_rate_replay import replay_heart_rate_shadow
 
 
+async def test_replay_includes_gadgetbridge_sourced_heart_rate(
+    db_session: AsyncSession,
+) -> None:
+    """离线重放必须和线上规则看到同一批来源，否则报告会静默少算。"""
+
+    suffix = uuid4().hex[:12]
+    user = User(
+        username=f"gadgetbridge_replay_{suffix}",
+        username_normalized=f"gadgetbridge_replay_{suffix}",
+        password_hash="test-only",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(PersonalProfile(user_id=user.id, age_years=30))
+
+    sample_start = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    received_at = datetime(2026, 6, 1, 0, 30, tzinfo=timezone.utc)
+    imported = WearableImport(
+        user_id=user.id,
+        client_sync_id=uuid4(),
+        request_hash=uuid4().hex + uuid4().hex,
+        record_type=WearableRecordType.HEART_RATE,
+        health_context_complete=True,
+        records_created=1,
+        records_updated=0,
+        records_unchanged=0,
+        records_deleted=0,
+        created_at=received_at,
+    )
+    db_session.add(imported)
+    await db_session.flush()
+    db_session.add(
+        WearableObservation(
+            user_id=user.id,
+            external_record_id=f"gb-heart-{suffix}",
+            record_type=WearableRecordType.HEART_RATE,
+            start_time=sample_start,
+            end_time=sample_start + timedelta(minutes=29),
+            start_zone_offset_seconds=0,
+            end_zone_offset_seconds=0,
+            data={
+                "samples": [
+                    {
+                        "time": (
+                            sample_start + timedelta(minutes=index)
+                        ).isoformat(),
+                        "beats_per_minute": 110,
+                    }
+                    for index in range(30)
+                ]
+            },
+            data_hash=uuid4().hex + uuid4().hex,
+            source_package="nodomain.freeyourgadget.gadgetbridge",
+            recording_method=2,
+            device={"manufacturer": "HUAWEI", "model": "Band 9"},
+            source_last_modified_at=received_at,
+            last_import_id=imported.id,
+        )
+    )
+    await db_session.flush()
+
+    report = await replay_heart_rate_shadow(
+        db_session,
+        user_id=user.id,
+        start_at=sample_start,
+        end_at=sample_start + timedelta(minutes=30),
+        timezone_name="UTC",
+    )
+
+    snapshot = report["current_snapshot"]
+    assert snapshot["summary"]["batch_count"] == 1
+    assert snapshot["summary"]["sample_count"] == 30
+    assert snapshot["episodes"][0]["direction"] == "high"
+
+
 async def test_replay_keeps_current_snapshot_and_labels_explicit_counterfactuals(
     db_session: AsyncSession,
 ) -> None:

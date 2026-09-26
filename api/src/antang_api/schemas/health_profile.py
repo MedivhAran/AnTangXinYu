@@ -152,12 +152,11 @@ class WearableRecordBase(StrictApiModel):
     end_time: datetime
     start_zone_offset_seconds: Annotated[int, Field(ge=-64800, le=64800)] | None = None
     end_zone_offset_seconds: Annotated[int, Field(ge=-64800, le=64800)] | None = None
-    # 允许的来源有两种：
-    #   1. Google Play 版 Zepp 经 Health Connect 写入（首版目标设备）。
-    #   2. Gadgetbridge 从手环数据库手动导出后导入（华为机型没有 Health Connect 通路）。
+    # 允许的来源是同一只华为手环的两个读取通道：
+    #   1. Google Play 版 Zepp 经 Health Connect 写入。
+    #   2. Gadgetbridge 直读手环数据库后手动导出（华为机型没有 Health Connect 通路）。
     # 其余来源仍然拒绝，避免把手机或其他 App 的累计步数、距离再次相加。
-    # 注意：主动关怀的候选筛选仍然只认 Zepp（proactive_care/heart_rate_replay.py
-    # 按 _ZEPP_PACKAGE 过滤），所以 Gadgetbridge 导入不会触发心率关怀任务。
+    # 心率规则对这两个通道一视同仁：两者写入的都是手环本机记录。
     source_package: Literal[
         "com.huami.watch.hmwatchmanager",
         "nodomain.freeyourgadget.gadgetbridge",
