@@ -121,7 +121,7 @@ export function ChatScreen({ api, user, onSignedOut }: Props) {
   );
   const healthProfileCards = useHealthProfileCards(api);
   const healthConnect = useHealthConnect(user.id, api);
-  const gadgetbridge = useGadgetbridge(user.id);
+  const gadgetbridge = useGadgetbridge(api);
   const refreshHealthProfileCards = healthProfileCards.refresh;
   const getAttachmentImageSource = useCallback(
     (attachmentId: string) => api.getChatAttachmentImageSource(attachmentId),

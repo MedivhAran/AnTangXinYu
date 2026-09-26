@@ -35,11 +35,11 @@ export function HealthConnectControl({
   const status = checking
     ? '正在检查手环连接'
     : progress ??
-    (lastSyncedAt === null
-      ? connected
-        ? '手环已连接'
-        : '连接 Health Connect 后可同步手环数据'
-      : `上次同步 ${formatLastSync(lastSyncedAt)}`);
+      (lastSyncedAt === null
+        ? connected
+          ? '手环已连接'
+          : '连接 Health Connect 后可同步手环数据'
+        : `上次同步 ${formatLastSync(lastSyncedAt)}`);
 
   return (
     <View style={styles.container}>
@@ -106,5 +106,3 @@ const styles = StyleSheet.create({
   disabledButton: { opacity: 0.5 },
   pressedButton: { opacity: 0.75 },
 });
-
-

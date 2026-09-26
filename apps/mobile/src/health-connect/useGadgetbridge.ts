@@ -1,262 +1,239 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
+import { randomUUID } from 'expo-crypto';
 
-import { API_URL, IS_DEMO_MODE } from '../config';
+import { API_URL_CONFIGURED } from '../config';
 import { errorMessage } from '../api/client';
-import { secureTokenStore } from '../auth/token-store';
 import {
   pickAndParseHealth,
   type HealthBundle,
 } from '../services/GadgetbridgeService';
+import { buildImportBatches } from './normalize-gadgetbridge';
+import type { WearableImporter } from './sync-health-connect';
 
-export type HealthConnectState = {
+// =====================================================================
+// Gadgetbridge 手环导入（手动选文件）
+//
+// 与 Health Connect 那条路的区别：Gadgetbridge 的数据在手机上的一个 .db 文件里，
+// 没有后台推送也没有 Changes Token，所以**只能由用户手动选文件导入**。
+// 因此这里没有"后台同步"和"前台自动同步"这两个概念，也不应该有对应开关。
+//
+// 上传一律走 ApiClient.importWearableRecords（即下面的 importer 参数），
+// 它已经实现了后端要求的强类型请求体和分批逻辑。不要再自己写 fetch。
+// =====================================================================
+
+const RECORD_TYPE_LABEL: Record<string, string> = {
+  heart_rate: '心率',
+  steps: '步数',
+  oxygen_saturation: '血氧',
+  resting_heart_rate: '静息心率',
+  distance: '距离',
+  sleep: '睡眠',
+};
+
+export type GadgetbridgeState = {
+  /** 正在解析选中的数据库（4 万行需要一点时间）。 */
   checking: boolean;
+  /** 已经成功解析过至少一次数据。 */
   connected: boolean;
+  /** 正在上传到后端。 */
   syncing: boolean;
   progress: string | null;
   lastSyncedAt: string | null;
   error: string | null;
-  backgroundStatus: 'checking' | 'enabled' | 'disabled' | 'unsupported';
-  backgroundError: string | null;
-  backgroundEnabling: boolean;
-  backgroundDisabling: boolean;
+  /** 解析结果，供健康看板直接渲染。 */
   lastBundle: HealthBundle | null;
 };
 
-const initialState: HealthConnectState = {
+const initialState: GadgetbridgeState = {
   checking: false,
   connected: false,
   syncing: false,
   progress: null,
   lastSyncedAt: null,
   error: null,
-  backgroundStatus: 'unsupported',
-  backgroundError: null,
-  backgroundEnabling: false,
-  backgroundDisabling: false,
   lastBundle: null,
 };
 
-async function uploadToBackend(
-  userId: string,
-  bundle: HealthBundle,
-  fileName: string,
-  signal: AbortSignal,
-): Promise<{ success: boolean; message: string; status?: number }> {
-  const tokens = await secureTokenStore.load();
-  if (!tokens) {
-    return { success: false, message: '登录已过期，请重新登录' };
-  }
-
-  const endpoint = `${API_URL.replace(/\/+$/, '').trim()}/api/v1/health-profile/wearable-imports`;
-
-  const { heartRates, steps } = bundle;
-  const avgHeartRate =
-    heartRates.length > 0
-      ? Math.round(
-        heartRates.reduce((a, b) => a + b.heartRate, 0) / heartRates.length,
-      )
-      : 0;
-  const totalSteps = steps.reduce((a, b) => a + b.steps, 0);
-
-  const payload: Record<string, unknown> = {
-    client_sync_id: `gb-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-    userId,
-    source: 'gadgetbridge',
-    fileName,
-    totalSteps,
-    avgHeartRate,
-    heartRateCount: heartRates.length,
-    stepsCount: steps.length,
-    heartRates,
-    steps,
-    syncedAt: new Date().toISOString(),
-  };
-
-  // 有血氧/静息心率才带 extras，避免后端 422 浪费一次往返
-  if (bundle.spo2.length > 0 || bundle.restingHeartRates.length > 0) {
-    payload.extras = {
-      spo2: bundle.spo2,
-      restingHeartRates: bundle.restingHeartRates,
-      calories: bundle.calories,
-      distance: bundle.distance,
-    };
-  }
-
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${tokens.accessToken}`,
-      },
-      body: JSON.stringify(payload),
-      signal,
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      return {
-        success: false,
-        status: response.status,
-        message: `上传失败(${response.status}): ${text.slice(0, 200)}`,
-      };
-    }
-
-    return { success: true, message: '已上传后端' };
-  } catch (e: any) {
-    if (e?.name === 'AbortError') {
-      return { success: false, message: '已取消' };
-    }
-    return { success: false, message: e?.message || '网络错误' };
-  }
+function abortError(): Error {
+  const error = new Error('手环同步已取消');
+  error.name = 'AbortError';
+  return error;
 }
 
-export function useGadgetbridge(userId?: string) {
-  const [state, setState] = useState(initialState);
+/** 把解析出来的数据按后端契约分批上传，返回一句可展示的结果摘要。 */
+async function uploadBundle(
+  importer: WearableImporter,
+  bundle: HealthBundle,
+  signal: AbortSignal,
+  onProgress: (message: string) => void,
+): Promise<string> {
+  const batches = buildImportBatches(bundle, randomUUID);
+  // 同一批次的网络重试必须复用 client_sync_id，所以先按类型聚合出总数
+  const totalByType = batches.reduce<Record<string, number>>((counts, batch) => {
+    counts[batch.recordType] = (counts[batch.recordType] ?? 0) + batch.records.length;
+    return counts;
+  }, {});
+
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+
+  for (let index = 0; index < batches.length; index += 1) {
+    if (signal.aborted) throw abortError();
+    const batch = batches[index];
+    const label = RECORD_TYPE_LABEL[batch.recordType] ?? batch.recordType;
+    onProgress(`正在上传 ${label}（第 ${index + 1}/${batches.length} 批）…`);
+
+    const result = (await importer.importWearableRecords(
+      batch.clientSyncId,
+      batch.recordType,
+      // 手动导入的是一份有限窗口的文件，不是完整健康上下文
+      false,
+      batch.records,
+      [],
+      signal,
+    )) as {
+      recordsCreated?: number;
+      recordsUpdated?: number;
+      recordsUnchanged?: number;
+    };
+
+    created += result?.recordsCreated ?? 0;
+    updated += result?.recordsUpdated ?? 0;
+    unchanged += result?.recordsUnchanged ?? 0;
+  }
+
+  if (signal.aborted) throw abortError();
+
+  const detail = Object.entries(totalByType)
+    .map(([recordType, count]) => `${RECORD_TYPE_LABEL[recordType] ?? recordType} ${count}`)
+    .join('、');
+  return `已上传 ${detail}（新增 ${created}、更新 ${updated}、未变化 ${unchanged}）`;
+}
+
+export function useGadgetbridge(importer: WearableImporter) {
+  const [state, setState] = useState<GadgetbridgeState>(initialState);
   const mounted = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const runSync = useCallback(async (): Promise<void> => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
-    if (mounted.current) {
-      setState((prev) => ({
-        ...prev,
-        syncing: true,
-        progress: '请选择 Gadgetbridge 导出的 .db 或 .csv 文件...',
-        error: null,
-      }));
-    }
+    setState((previous) => ({
+      ...previous,
+      checking: true,
+      syncing: false,
+      progress: '正在解析手环数据库…',
+      error: null,
+    }));
 
     try {
       const result = await pickAndParseHealth();
       if (!mounted.current) return;
 
-      if (!result.success || !result.bundle) {
-        setState((prev) => ({
-          ...prev,
-          syncing: false,
+      if (!result.success || result.bundle === undefined) {
+        setState((previous) => ({
+          ...previous,
+          checking: false,
           progress: null,
           error: result.message,
         }));
-        Alert.alert('读取失败', result.message);
+        Alert.alert('读取手环数据失败', result.message);
         return;
       }
 
-      // 先落地 bundle，看板立即可用
-      setState((prev) => ({
-        ...prev,
+      // 先把 bundle 落地，看板立刻可用；上传失败也不影响本地查看
+      setState((previous) => ({
+        ...previous,
+        checking: false,
+        connected: true,
         lastBundle: result.bundle!,
-        progress: `解析完成：${result.message}，准备上传...`,
+        progress: `已解析：${result.message}`,
       }));
 
-      if (!userId) {
-        setState((prev) => ({
-          ...prev,
-          syncing: false,
+      if (!API_URL_CONFIGURED) {
+        setState((previous) => ({
+          ...previous,
           progress: null,
-          connected: true,
-          lastSyncedAt: new Date().toISOString(),
-          error: null,
+          error: '后端地址未配置（构建时缺少 EXPO_PUBLIC_API_URL），数据只在本机展示。',
         }));
-        Alert.alert('提示', '未登录，数据已解析并展示在看板，未上传后端');
         return;
       }
 
-      if (IS_DEMO_MODE) {
-        setState((prev) => ({
-          ...prev,
-          syncing: false,
-          progress: null,
-          connected: true,
-          lastSyncedAt: new Date().toISOString(),
-        }));
-        Alert.alert('演示模式', '已解析数据，跳过上传');
-        return;
-      }
-
-      setState((prev) => ({ ...prev, progress: '正在上传到服务器...' }));
-      const upload = await uploadToBackend(
-        userId,
+      setState((previous) => ({ ...previous, syncing: true }));
+      const summary = await uploadBundle(
+        importer,
         result.bundle,
-        result.fileName ?? 'unknown.db',
         controller.signal,
+        (message) => {
+          if (mounted.current) {
+            setState((previous) => ({ ...previous, progress: message }));
+          }
+        },
       );
-
       if (!mounted.current) return;
 
-      if (upload.success) {
-        setState((prev) => ({
-          ...prev,
-          connected: true,
-          syncing: false,
-          progress: null,
-          lastSyncedAt: new Date().toISOString(),
-          error: null,
-        }));
-        Alert.alert(
-          '✅ 手环数据已上传',
-          `${result.message}\n\n${upload.message}\n\n现在可以在聊天里问我："分析一下我的手环数据"`,
-        );
-      } else {
-        setState((prev) => ({
-          ...prev,
-          syncing: false,
-          progress: null,
-          error: upload.message,
-        }));
-        Alert.alert('上传失败', upload.message);
-      }
+      setState((previous) => ({
+        ...previous,
+        syncing: false,
+        progress: null,
+        lastSyncedAt: new Date().toISOString(),
+        error: null,
+      }));
+      Alert.alert(
+        '手环数据已上传',
+        `${result.message}\n\n${summary}\n\n现在可以在聊天里问：“帮我看看最近的手环数据”`,
+      );
     } catch (error) {
-      if (mounted.current) {
-        setState((prev) => ({
-          ...prev,
-          syncing: false,
-          progress: null,
-          error: errorMessage(error),
-        }));
+      if (!mounted.current) return;
+      if (error instanceof Error && error.name === 'AbortError') {
+        setState((previous) => ({ ...previous, checking: false, syncing: false, progress: null }));
+        return;
       }
+      const message = errorMessage(error);
+      setState((previous) => ({
+        ...previous,
+        checking: false,
+        syncing: false,
+        progress: null,
+        error: message,
+      }));
+      Alert.alert('上传手环数据失败', message);
     } finally {
       abortRef.current = null;
     }
-  }, [userId]);
+  }, [importer]);
 
-  const connect = useCallback(() => runSync(), [runSync]);
-  const sync = useCallback(() => runSync(), [runSync]);
+  const connect = useCallback(() => {
+    void runSync();
+  }, [runSync]);
+
+  const sync = useCallback(() => {
+    void runSync();
+  }, [runSync]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-    if (mounted.current) {
-      setState((prev) => ({ ...prev, syncing: false, progress: null }));
-    }
-  }, []);
-
-  const enableBackground = useCallback(async () => {
-    Alert.alert('提示', '暂不支持后台同步');
-  }, []);
-  const disableBackground = useCallback(async () => {
-    Alert.alert('提示', '暂不支持后台同步');
-  }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
+    setState((previous) => ({ ...previous, checking: false, syncing: false, progress: null }));
   }, []);
 
   return {
     ...state,
-    // 兼容 ChatScreen 横幅里已用到的字段
     heartRateCount: state.lastBundle?.heartRates.length ?? 0,
     connect,
     sync,
     stop,
-    enableBackground,
-    disableBackground,
   };
 }
